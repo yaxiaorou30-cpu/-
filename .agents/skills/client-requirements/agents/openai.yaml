@@ -1,0 +1,7 @@
+interface:
+  display_name: "甲方需求获取"
+  short_description: "为甲方访谈、多人需求会议和产品定义提供结构化工作流"
+  default_prompt: "使用 $client-requirements 为即将进行的甲方访谈制定计划并生成问题清单。"
+
+policy:
+  allow_implicit_invocation: true

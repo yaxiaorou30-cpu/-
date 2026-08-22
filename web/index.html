@@ -1,0 +1,938 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="面向授权民警的本机舆情线索采集、审核与报告工作台"
+    />
+    <title>舆情研判工作台</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="side-rail">
+        <button class="brand" type="button" data-view-target="task" aria-label="返回新建任务">
+          <span class="brand-mark" aria-hidden="true">舆</span>
+          <span class="brand-copy">
+            <strong>舆情研判</strong>
+            <small>本机作业工作台</small>
+          </span>
+        </button>
+
+        <nav class="primary-nav" aria-label="主要功能">
+          <button class="nav-item active" type="button" data-view-target="task" aria-current="page">
+            <span class="nav-index">01</span>
+            <span class="nav-label">新建任务</span>
+          </button>
+          <button class="nav-item" type="button" data-view-target="overview">
+            <span class="nav-index">02</span>
+            <span class="nav-label">运行态势</span>
+          </button>
+          <button class="nav-item" type="button" data-view-target="review">
+            <span class="nav-index">03</span>
+            <span class="nav-label">数据审核</span>
+            <span class="nav-count" id="navResultCount">0</span>
+          </button>
+          <button class="nav-item" type="button" data-view-target="sources">
+            <span class="nav-index">04</span>
+            <span class="nav-label">来源与账号</span>
+            <span class="nav-count" id="navAccountCount">0</span>
+          </button>
+          <button class="nav-item" type="button" data-view-target="monitor">
+            <span class="nav-index">05</span>
+            <span class="nav-label">持续监测</span>
+            <span class="nav-count" id="navMonitorCount">0</span>
+          </button>
+          <button class="nav-item" type="button" data-view-target="report">
+            <span class="nav-index">06</span>
+            <span class="nav-label">报告中心</span>
+          </button>
+        </nav>
+
+        <div class="rail-spacer"></div>
+
+        <section class="local-state" aria-label="本机作业说明">
+          <div class="local-state-title">
+            <span class="signal-dot" aria-hidden="true"></span>
+            <strong>本机安全作业</strong>
+          </div>
+          <p>采集、审核和报告数据保存在当前设备，最终结论由民警人工确认。</p>
+        </section>
+
+        <div class="rail-user">
+          <div class="user-identity">
+            <span class="user-avatar" aria-hidden="true">警</span>
+            <span id="currentUser">正在确认身份</span>
+          </div>
+          <div class="rail-user-actions">
+            <button class="rail-action" id="accountSecurityBtn" type="button">账号安全</button>
+            <button class="rail-action" id="logoutBtn" type="button">退出</button>
+          </div>
+        </div>
+      </aside>
+
+      <div class="app-canvas">
+        <header class="topbar">
+          <div class="route-title">
+            <h1 id="viewTitle">新建采集任务</h1>
+            <p id="viewHint">设置事件线索与采集口径</p>
+          </div>
+          <div class="topbar-actions">
+            <span class="server-status" id="serverStatus" role="status">
+              <span class="status-indicator" aria-hidden="true"></span>
+              <span>连接中</span>
+            </span>
+            <button class="icon-text-btn" id="refreshBtn" type="button" title="刷新最新数据">
+              刷新数据
+            </button>
+          </div>
+        </header>
+
+        <main class="workspace">
+          <section class="view-panel active" data-view-panel="task">
+            <div class="page-lead">
+              <div>
+                <h2>创建一次舆情检索</h2>
+                <p>先说明要查什么，再限定地区、时间和来源。系统提供可复核线索，最终结论由人工确认。</p>
+              </div>
+            </div>
+
+            <div class="mission-layout">
+              <form class="surface mission-form" id="crawlForm">
+                <div class="section-heading">
+                  <div>
+                    <h3>任务内容与检索范围</h3>
+                    <p class="section-intro">日常使用只需填写主题、关键词并确认范围。</p>
+                  </div>
+                  <span class="required-note">* 必填</span>
+                </div>
+
+                <label class="field field-wide">
+                  <span>任务主题 *</span>
+                  <input
+                    id="taskTopic"
+                    type="text"
+                    maxlength="80"
+                    required
+                    placeholder="例如：深圳强降雨交通影响舆情"
+                  />
+                  <small>用于识别任务和查看历史，不直接作为搜索条件。</small>
+                </label>
+
+                <label class="field field-wide">
+                  <span>检索关键词 *</span>
+                  <textarea
+                    id="keywords"
+                    rows="3"
+                    required
+                    placeholder="例如：深圳暴雨&#10;交通中断&#10;应急响应"
+                  ></textarea>
+                  <small>填写平台中实际搜索的词；多个词可用逗号或换行分隔。</small>
+                </label>
+
+                <fieldset class="form-section scope-section">
+                  <legend>检索范围</legend>
+                  <div class="field-grid scope-grid">
+                    <label class="field">
+                      <span>关注区域</span>
+                      <input id="region" type="text" placeholder="全国，或填写省、市、区县" />
+                      <small>留空表示全国。</small>
+                    </label>
+                    <label class="field">
+                      <span>时间范围</span>
+                      <select id="timeRange"></select>
+                      <small>只保留发布时间落在范围内的记录。</small>
+                    </label>
+                  </div>
+                  <div class="custom-date-range hidden" id="customDateRange">
+                    <label class="field">
+                      <span>开始日期 *</span>
+                      <input id="startDate" type="date" />
+                    </label>
+                    <label class="field">
+                      <span>结束日期 *</span>
+                      <input id="endDate" type="date" />
+                    </label>
+                  </div>
+                </fieldset>
+
+                <fieldset class="form-section">
+                  <legend>采集来源</legend>
+                  <div class="choice-row">
+                    <label class="choice-card">
+                      <input type="radio" name="sourceStrategy" value="stable_first" checked />
+                      <span>
+                        <strong>先查政府官网</strong>
+                        <small>政府官网结果达到基础数量后，再补充已选社交平台。</small>
+                      </span>
+                    </label>
+                    <label class="choice-card">
+                      <input type="radio" name="sourceStrategy" value="stable" />
+                      <span>
+                        <strong>只查政府官网</strong>
+                        <small>仅采集下方已勾选的政府官方网站。</small>
+                      </span>
+                    </label>
+                    <label class="choice-card">
+                      <input type="radio" name="sourceStrategy" value="social" />
+                      <span>
+                        <strong>只查社交平台</strong>
+                        <small>使用已选平台和当前民警维护的登录会话。</small>
+                      </span>
+                    </label>
+                  </div>
+                </fieldset>
+
+                <button class="source-summary" type="button" data-view-target="sources">
+                  <span>
+                    <strong>当前采集范围</strong>
+                    <small id="selectedSourceSummary">正在读取来源配置</small>
+                  </span>
+                  <span class="summary-link">调整来源与账号 →</span>
+                </button>
+
+                <details class="advanced-settings">
+                  <summary>
+                    <span>
+                      <strong>高级设置</strong>
+                      <small>结果总量、结果不足提醒和持续监测</small>
+                    </span>
+                  </summary>
+                  <div class="field-grid advanced-grid">
+                    <label class="field">
+                      <span>整个任务最多保留</span>
+                      <select id="collectLevel"></select>
+                      <small>所有已选来源合计，不是每个平台各自的数量。</small>
+                    </label>
+                    <label class="field">
+                      <span>结果不足提醒线</span>
+                      <input id="minRealResults" type="number" min="1" placeholder="自动" />
+                      <small>少于该数量时提示“结果不足”；已采集内容仍会保留。</small>
+                    </label>
+                  </div>
+                  <div class="monitor-row">
+                    <label class="field compact-field">
+                      <span>持续监测间隔</span>
+                      <select id="monitorInterval">
+                        <option value="0">不创建监测计划</option>
+                        <option value="15">每 15 分钟</option>
+                        <option value="30">每 30 分钟</option>
+                        <option value="60">每 60 分钟</option>
+                      </select>
+                    </label>
+                    <button class="quiet-btn" id="monitorBtn" type="button">创建监测计划</button>
+                  </div>
+                </details>
+
+                <div class="form-actions">
+                  <button class="primary-btn" id="crawlBtn" type="submit">开始采集</button>
+                </div>
+              </form>
+
+            </div>
+          </section>
+
+          <section class="view-panel" data-view-panel="overview">
+            <div class="page-lead">
+              <div>
+                <span class="eyebrow">运行态势</span>
+                <h2>先看数据是否够用，再看来源是否健康</h2>
+                <p>逐项检查实际结果和缺口；有提醒时按说明补充或复核，不再用综合分数代替判断。</p>
+              </div>
+            </div>
+
+            <section class="metric-strip" aria-label="核心采集指标">
+              <div class="metric">
+                <span>真实结果</span>
+                <strong id="realCount">0</strong>
+                <small>全部可追溯记录</small>
+              </div>
+              <div class="metric">
+                <span>政府官网</span>
+                <strong id="stableCount">0</strong>
+                <small>公开发布的信息</small>
+              </div>
+              <div class="metric">
+                <span>社交平台</span>
+                <strong id="socialCount">0</strong>
+                <small>账号授权增强</small>
+              </div>
+              <div class="metric emphasized">
+                <span>当前状态</span>
+                <strong id="qualityStatus">未检查</strong>
+                <small>由下方检查项共同决定</small>
+              </div>
+            </section>
+
+            <div class="overview-grid">
+              <section class="surface quality-board">
+                <div class="section-heading">
+                  <div>
+                    <span class="section-kicker">逐项核对</span>
+                    <h3>采集检查清单</h3>
+                  </div>
+                  <div class="heat-readout">
+                    <span>热度指数</span>
+                    <strong id="heatIndex">0</strong>
+                  </div>
+                </div>
+                <p class="quality-note" id="qualityNote">暂无采集数据</p>
+                <div class="quality-checklist" id="qualityChecklist">
+                  <div class="quality-check-empty">运行采集任务后显示检查结果。</div>
+                </div>
+                <div class="human-check">
+                  <strong>人工复核是强制步骤</strong>
+                  <span>系统输出的是采集线索与质量提示，不自动给出最终舆情结论。</span>
+                </div>
+              </section>
+
+              <section class="surface">
+                <div class="section-heading">
+                  <div>
+                    <span class="section-kicker">来源监测</span>
+                    <h3>来源健康</h3>
+                  </div>
+                  <button class="text-btn" type="button" data-view-target="sources">管理来源</button>
+                </div>
+                <div class="source-health" id="sourceHealth">
+                  <div class="compact-item"><span>暂无来源健康数据</span></div>
+                </div>
+              </section>
+            </div>
+
+            <section class="surface history-panel">
+              <div class="section-heading">
+                <div>
+                  <span class="section-kicker">追踪记录</span>
+                  <h3>任务历史</h3>
+                </div>
+                <div class="history-heading-actions">
+                  <button class="text-btn" id="createHistoryBackupBtn" type="button">创建备份</button>
+                  <button class="text-btn" id="restoreHistoryBackupBtn" type="button">恢复备份</button>
+                  <button class="text-btn" id="toggleHistoryBtn" type="button">查看全部</button>
+                  <button class="text-btn" type="button" data-view-target="task">新建任务</button>
+                </div>
+              </div>
+              <div class="history-archive-summary" id="historyArchiveSummary">
+                正在读取历史归档状态
+              </div>
+              <div class="history-workspace">
+                <div class="task-history" id="taskHistory">
+                  <div class="history-empty"><span>暂无任务历史</span></div>
+                </div>
+                <aside class="history-detail hidden" id="historyDetail" aria-live="polite">
+                  <div class="history-detail-header">
+                    <div>
+                      <span>任务详情</span>
+                      <h4 id="historyDetailTitle">选择一条历史任务</h4>
+                    </div>
+                    <button class="text-btn" id="closeHistoryDetail" type="button">关闭</button>
+                  </div>
+                  <div class="history-detail-content" id="historyDetailContent"></div>
+                  <p class="history-boundary-note">
+                    新任务会保存正文、审核结果和报告；旧任务若只有任务信息，会明确标记且不会补造正文。
+                  </p>
+                  <div class="history-archive-preview" id="historyArchivePreview"></div>
+                  <div class="history-detail-actions">
+                    <button class="primary-btn" id="loadHistoryBtn" type="button">载入正文与审核结果</button>
+                    <button class="secondary-btn" id="reuseHistoryBtn" type="button">按此条件新建任务</button>
+                    <button class="danger-btn" id="deleteHistoryBtn" type="button">删除历史任务</button>
+                  </div>
+                </aside>
+              </div>
+              <details class="history-trash-panel">
+                <summary>回收站 <span id="historyTrashCount">0</span></summary>
+                <p>删除的完整归档先进入回收站。永久删除不会清除已经下载或创建的加密备份。</p>
+                <div class="history-trash-list" id="historyTrashList">
+                  <div class="history-empty">回收站为空</div>
+                </div>
+              </details>
+            </section>
+          </section>
+
+          <section class="view-panel" data-view-panel="review">
+            <div class="page-lead">
+              <div>
+                <span class="eyebrow">人工审核</span>
+                <h2>只让经过确认的线索进入报告</h2>
+                <p>点击标题核对原始内容，取消勾选无关、重复或不可确认的记录，然后保存审核结果。</p>
+              </div>
+              <div class="lead-actions">
+                <button class="secondary-btn" id="selectAllRows" type="button">全选</button>
+                <button class="secondary-btn" id="invertRows" type="button">反选</button>
+                <button class="primary-btn" id="saveReviewBtn" type="button">保存审核结果</button>
+              </div>
+            </div>
+
+            <section class="surface review-surface">
+              <div class="review-toolbar">
+                <div>
+                  <strong>审核清单</strong>
+                  <span>先打开原内容核对，再确认分类和情感。机器初判只用于辅助筛选。</span>
+                </div>
+                <a class="text-link" id="dataDownload" href="/download?path=data/latest_news.json">下载原始数据</a>
+              </div>
+              <div class="review-filters" aria-label="审核筛选条件">
+                <label>
+                  <span>来源平台</span>
+                  <select id="reviewSourceFilter">
+                    <option value="">全部来源</option>
+                  </select>
+                </label>
+                <label>
+                  <span>内容分类</span>
+                  <select id="reviewCategoryFilter">
+                    <option value="">全部分类</option>
+                  </select>
+                </label>
+                <label>
+                  <span>情感参考</span>
+                  <select id="reviewSentimentFilter">
+                    <option value="">全部情感</option>
+                  </select>
+                </label>
+                <button class="secondary-btn review-filter-clear" id="clearReviewFilters" type="button">清除筛选</button>
+                <span class="review-visible-count" id="reviewVisibleCount">暂无数据</span>
+              </div>
+              <div class="review-guidance">
+                <strong>操作方法</strong>
+                <span>当前来源、分类和情感筛选会成为本次报告范围；取消“保留”会永久排除该线索，修改判断后需要保存。</span>
+              </div>
+              <section class="summary-workbench" aria-labelledby="summaryWorkbenchTitle">
+                <div class="summary-workbench-header">
+                  <div>
+                    <strong id="summaryWorkbenchTitle">摘要助手</strong>
+                    <span>单条摘要在每条线索标题下生成；也可以汇总一个来源或当前筛选结果。</span>
+                  </div>
+                  <div class="summary-actions">
+                    <button class="secondary-btn" id="summarySourceBtn" type="button" disabled>汇总当前来源</button>
+                    <button class="primary-btn" id="summaryFilteredBtn" type="button">汇总当前筛选结果</button>
+                  </div>
+                </div>
+                <div class="summary-result" id="summaryResult">
+                  <div class="summary-empty">选择一种摘要方式；若刚修改了保留、分类或情感，请先保存审核结果。</div>
+                </div>
+              </section>
+              <div class="table-wrap">
+                <table class="review-table">
+                  <thead>
+                    <tr>
+                      <th>保留</th>
+                      <th>标题 / 线索</th>
+                      <th>来源 / 时间</th>
+                      <th>人工判断</th>
+                    </tr>
+                  </thead>
+                  <tbody id="resultBody">
+                    <tr>
+                      <td class="empty" colspan="4">暂无数据</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <div class="data-path">
+                <span>本机数据位置</span>
+                <code id="dataPath">data/latest_news.json</code>
+              </div>
+            </section>
+          </section>
+
+          <section class="view-panel" data-view-panel="sources">
+            <div class="page-lead">
+              <div>
+                <span class="eyebrow">采集边界</span>
+                <h2>明确来源范围，维护使用者自己的平台账号</h2>
+                <p>政府官网公开信息尽力采集；需要登录的平台由当前使用者提供并维护账号，失效后重新授权。</p>
+              </div>
+            </div>
+
+            <div class="source-layout">
+              <section class="surface source-selector-panel">
+                <div class="section-heading">
+                  <div>
+                    <span class="section-kicker">S2 / 公开信息</span>
+                    <h3>政府官方网站</h3>
+                  </div>
+                  <button class="text-btn" type="button" data-select="stable">全选</button>
+                </div>
+                <p class="section-description">优先接入国家级业务官网和天津本地公安、政府发布、应急信息栏目；仅显示已真实核对的来源。</p>
+                <div class="check-grid" id="stableSources"></div>
+              </section>
+
+              <section class="surface source-selector-panel">
+                <div class="section-heading">
+                  <div>
+                    <span class="section-kicker">S3 / 社交平台</span>
+                    <h3>社交平台增强</h3>
+                  </div>
+                  <button class="text-btn" type="button" data-select="social">全选</button>
+                </div>
+                <p class="section-description">平台登录状态、验证码和风控可能影响采集，结果需要人工核验。</p>
+                <div class="check-grid" id="socialPlatforms"></div>
+              </section>
+
+              <section class="surface settings-panel">
+                <div class="section-heading">
+                  <div>
+                    <span class="section-kicker">网络与诊断</span>
+                    <h3>运行设置</h3>
+                  </div>
+                </div>
+                <label class="switch-row">
+                  <span>
+                    <strong>使用系统代理</strong>
+                    <small>跟随当前 Windows 网络代理设置。</small>
+                  </span>
+                  <input id="useSystemProxy" type="checkbox" />
+                </label>
+                <label class="switch-row">
+                  <span>
+                    <strong>保存失败诊断快照</strong>
+                    <small>仅在排障需要时开启，清除平台授权时同步删除。</small>
+                  </span>
+                  <input id="saveDiagnostics" type="checkbox" />
+                </label>
+              </section>
+
+              <section class="surface compliance-panel">
+                <div class="section-heading">
+                  <div>
+                    <span class="section-kicker">访问边界</span>
+                    <h3>采集与实测规则</h3>
+                  </div>
+                </div>
+                <p id="complianceNotice">
+                  仅采集公开可访问或由甲方授权账号可访问的内容；验证码由使用者在浏览器中人工完成。
+                </p>
+                <div class="platform-test-legend" aria-label="平台实测判定含义">
+                  <div class="platform-test-rule is-success">
+                    <strong>完全通过</strong>
+                    <span>当前登录有效，并且本次采集到有效结果。</span>
+                  </div>
+                  <div class="platform-test-rule is-warning">
+                    <strong>采集通过，登录未通过</strong>
+                    <span>公开结果可以读取，但当前账号状态未确认；请重新辅助登录并保存会话。</span>
+                  </div>
+                  <div class="platform-test-rule is-warning">
+                    <strong>登录通过，采集未通过</strong>
+                    <span>账号当前有效，问题在采集、关键词或网络；无需反复登录。</span>
+                  </div>
+                  <div class="platform-test-rule is-action">
+                    <strong>需要人工处理</strong>
+                    <span>出现验证码或平台风控时，在辅助浏览器中完成处理后重新测试。</span>
+                  </div>
+                </div>
+                <p class="platform-test-note">
+                  登录判定优先采用平台身份接口；接口无明确结论时，只检查当前页顶部或侧栏实际可见的账号控件。
+                  正文作者头像、整页源码字段、Cookie、保存时状态和单纯取得公开结果，都不能单独证明当前登录。
+                </p>
+                <ul>
+                  <li>不绕过平台访问控制，不自动破解验证码。</li>
+                  <li>账号只由实际使用民警提供和维护。</li>
+                  <li>原始链接和来源信息必须保留，便于复核。</li>
+                </ul>
+              </section>
+            </div>
+
+            <div class="account-workspace">
+              <section class="surface account-panel">
+                <div class="section-heading">
+                  <div>
+                    <span class="section-kicker">账号授权</span>
+                    <h3>平台账号与浏览器会话</h3>
+                  </div>
+                  <div class="account-heading-actions">
+                    <button class="secondary-btn" id="testAllAccountsBtn" type="button">批量实测五个平台</button>
+                    <button class="text-btn" id="toggleAccounts" type="button">收起</button>
+                  </div>
+                </div>
+                <p class="section-description">
+                  优先使用“打开辅助登录 → 人工完成登录/验证码 → 保存会话”。账号信息只在本机加密保存。
+                </p>
+                <div class="account-grid" id="accountGrid"></div>
+              </section>
+
+              <aside class="source-operation-panel" aria-label="来源与账号作业日志">
+                <div class="source-log-heading">
+                  <div>
+                    <span class="section-kicker">实时反馈</span>
+                    <h3>来源操作记录</h3>
+                  </div>
+                  <button class="source-log-clear" id="clearSourceLogBtn" type="button">清空</button>
+                </div>
+                <div class="source-log-state" id="sourceLogState">
+                  <span class="source-log-state-dot" aria-hidden="true"></span>
+                  <span>等待操作</span>
+                </div>
+                <div class="source-log-box" id="sourceLogBox" aria-live="polite">
+                  <div class="source-log-empty">来源选择、网络设置和账号操作结果会显示在这里。</div>
+                </div>
+              </aside>
+            </div>
+          </section>
+
+          <section class="view-panel" data-view-panel="monitor">
+            <div class="page-lead monitor-page-lead">
+              <div>
+                <span class="eyebrow">服务器端持续运行</span>
+                <h2>只把新出现的线索交给人工查看</h2>
+                <p>关闭页面或重启程序后，已启用的计划仍会恢复；首次运行只建立基线，之后才记录新增线索。</p>
+              </div>
+              <button class="secondary-btn" id="monitorRefreshBtn" type="button">刷新状态</button>
+            </div>
+
+            <div class="monitor-metrics" aria-label="监测概况">
+              <article class="surface monitor-metric">
+                <span>运行中的计划</span>
+                <strong id="monitorPlanCount">0</strong>
+              </article>
+              <article class="surface monitor-metric">
+                <span>累计新增线索</span>
+                <strong id="monitorNewCount">0</strong>
+              </article>
+              <article class="surface monitor-metric attention">
+                <span>需要人工处理</span>
+                <strong id="monitorAttentionCount">0</strong>
+              </article>
+            </div>
+
+            <div class="monitor-workspace">
+              <section class="surface monitor-plan-panel">
+                <div class="section-heading">
+                  <div>
+                    <span class="section-kicker">监测计划</span>
+                    <h3>计划列表</h3>
+                  </div>
+                  <button class="text-btn" type="button" data-view-target="task">新建计划</button>
+                </div>
+                <div class="monitor-plan-list" id="monitorPlanList">
+                  <div class="empty-state">
+                    <strong>尚未创建监测计划</strong>
+                    <span>在“新建任务”中填写主题、关键词和来源，再选择监测间隔。</span>
+                  </div>
+                </div>
+              </section>
+
+              <section class="surface monitor-detail-panel" id="monitorDetail">
+                <div class="empty-state">
+                  <strong>选择一个监测计划</strong>
+                  <span>这里会显示计划状态、新增线索和最近运行记录。</span>
+                </div>
+              </section>
+            </div>
+          </section>
+
+          <section class="view-panel" data-view-panel="report">
+            <div class="page-lead">
+              <div>
+                <span class="eyebrow">报告输出</span>
+                <h2>审核数据、修改初稿，再生成 Word 通报</h2>
+                <p>固定流程：保存数据审核结果 → 生成证据化初稿 → 在预览中修改 → 导出 Word。</p>
+              </div>
+            </div>
+
+            <section class="surface report-controls">
+              <div class="report-scope-card">
+                <div>
+                  <span class="section-kicker">本次报告数据范围</span>
+                  <strong id="reportScopeSummary">全部已审核数据</strong>
+                  <p id="reportScopeDetail">未设置来源、分类或情感条件。</p>
+                </div>
+                <button class="text-btn" type="button" data-view-target="review">返回数据审核修改范围</button>
+              </div>
+              <div class="report-control-copy">
+                <span class="section-kicker">输出设置</span>
+                <h3>报告模板</h3>
+                <p>一般主题默认使用“事件阐述类”；只有明确的案件或风险任务才切换专用模板。</p>
+              </div>
+              <label class="field template-field">
+                <span>选择模板</span>
+                <select id="templateSelect"></select>
+              </label>
+              <div class="report-actions">
+                <button class="secondary-btn" id="reportPreviewBtn" type="button">生成预览</button>
+                <button class="primary-btn" id="reportBtn" type="button">生成 Word 报告</button>
+                <a class="download-btn hidden" id="reportDownload" href="#">下载报告</a>
+              </div>
+            </section>
+
+            <section
+              class="surface ai-report-panel hidden"
+              id="aiReportPanel"
+              aria-labelledby="aiReportHeading"
+            >
+              <div class="section-heading ai-report-heading">
+                <div>
+                  <span class="section-kicker">可选的第三方 AI 辅助</span>
+                  <h3 id="aiReportHeading">DeepSeek 分析草稿</h3>
+                  <p>规则报告不会自动调用 AI；每次生成前都需要重新确认本次发送范围。</p>
+                </div>
+                <span class="ai-provider-state" id="aiProviderState">等待报告预览</span>
+              </div>
+
+              <div class="ai-disclosure-grid">
+                <div>
+                  <span>服务商与模型</span>
+                  <strong id="aiProviderModel">DeepSeek · 未读取配置</strong>
+                </div>
+                <div>
+                  <span>本次拟发送范围</span>
+                  <strong id="aiExternalScope">生成规则预览后显示</strong>
+                </div>
+                <div>
+                  <span>发送字段</span>
+                  <strong id="aiExternalFields">证据编号、标题、正文、来源及人工确认标签</strong>
+                </div>
+              </div>
+
+              <p class="ai-security-note">
+                系统仅按甲方审核结果和本次人工确认执行发送；哪些内容允许发送由甲方决定，系统不作合法性、授权充分性或保密属性判断。系统不会发送登录配置中的账号、密码、验证码、Cookie、令牌、会话凭据或审核备注。
+              </p>
+              <label class="ai-confirmation">
+                <input id="aiExternalSendConfirm" type="checkbox" />
+                <span>我确认已按甲方内部规则完成本次数据审核并获得授权，同意将上方所列字段发送至所示第三方 AI 服务；本次仅发起一次请求。</span>
+              </label>
+              <div class="ai-actions">
+                <button class="secondary-btn" id="aiGenerateBtn" type="button" disabled>
+                  生成 AI 分析草稿
+                </button>
+                <button class="primary-btn" id="aiApplyBtn" type="button" disabled>
+                  采用到报告预览
+                </button>
+                <button class="text-btn" id="aiDiscardBtn" type="button" disabled>
+                  舍弃草稿
+                </button>
+              </div>
+              <p class="ai-draft-status" id="aiDraftStatus" role="status" aria-live="polite">
+                AI 功能默认关闭，普通预览和 Word 导出不会产生调用费用。
+              </p>
+
+              <div class="ai-draft-editor hidden" id="aiDraftEditor">
+                <div class="ai-draft-grid">
+                  <label class="field">
+                    <span>AI 内容摘要草稿</span>
+                    <textarea data-ai-section="summary" rows="5"></textarea>
+                  </label>
+                  <label class="field">
+                    <span>AI 主要观点与研判草稿</span>
+                    <textarea data-ai-section="analysis" rows="6"></textarea>
+                  </label>
+                  <label class="field">
+                    <span>AI 风险点草稿</span>
+                    <textarea data-ai-section="risks" rows="5"></textarea>
+                  </label>
+                  <label class="field">
+                    <span>AI 工作建议草稿</span>
+                    <textarea data-ai-section="recommendations" rows="5"></textarea>
+                  </label>
+                </div>
+                <p class="ai-usage" id="aiUsage">尚无本次调用用量。</p>
+              </div>
+            </section>
+
+            <section class="surface report-preview-panel">
+              <div class="section-heading">
+                <div>
+                  <span class="section-kicker">生成结果</span>
+                  <h3>报告预览</h3>
+                </div>
+                <button class="text-btn" type="button" data-view-target="review">返回审核</button>
+              </div>
+              <div class="report-preview" id="reportPreview">
+                <div class="empty-state">
+                  <strong>尚未生成预览</strong>
+                  <span>完成数据审核后，点击“生成预览”检查报告结构、采集检查项和证据引用。</span>
+                </div>
+              </div>
+            </section>
+          </section>
+        </main>
+
+        <aside class="global-operations-dock" id="globalOperationsDock" aria-label="全局运行中心">
+          <button
+            class="global-operations-summary"
+            id="globalOperationsToggle"
+            type="button"
+            aria-expanded="false"
+            aria-controls="globalOperationsBody"
+          >
+            <span class="global-operations-identity">
+              <span class="global-run-dot" aria-hidden="true"></span>
+              <span class="global-operations-title">
+                <small>全局运行</small>
+                <strong id="globalRunHeadline">正在连接系统</strong>
+              </span>
+            </span>
+            <span
+              class="global-mini-progress"
+              id="globalMiniProgress"
+              role="progressbar"
+              aria-label="当前任务进度"
+              aria-valuemin="0"
+              aria-valuemax="100"
+              aria-valuenow="0"
+            >
+              <span id="globalMiniProgressBar"></span>
+            </span>
+            <span class="global-latest-log" id="globalLatestLog">等待系统连接</span>
+            <span class="global-log-count" id="globalLogCount">0 条日志</span>
+            <span class="global-toggle-copy" id="globalOperationsToggleCopy">展开</span>
+            <span class="global-toggle-chevron" aria-hidden="true">⌃</span>
+          </button>
+
+          <div class="global-operations-body" id="globalOperationsBody" hidden>
+            <div class="task-console global-task-console">
+              <section class="surface task-progress-panel">
+                <div class="section-heading">
+                  <div>
+                    <span class="section-kicker">实时状态</span>
+                    <h3>当前任务</h3>
+                  </div>
+                  <span class="task-id" id="taskIdLabel">无任务</span>
+                </div>
+                <div class="progress-track" aria-label="任务进度">
+                  <span id="progressBar"></span>
+                </div>
+                <p class="task-note" id="taskNote">当前没有正在运行的采集任务。</p>
+              </section>
+
+              <section class="surface console-section">
+                <div class="compact-heading">
+                  <h3>任务事件</h3>
+                  <span>最近 8 条</span>
+                </div>
+                <div class="event-list" id="eventList">
+                  <div class="compact-item"><span>暂无进度事件</span></div>
+                </div>
+              </section>
+
+              <section class="surface console-section log-panel">
+                <div class="compact-heading">
+                  <h3>全局作业日志</h3>
+                  <span>本次会话</span>
+                </div>
+                <div class="log-box" id="logBox" aria-live="polite">
+                  <div class="log-line log-placeholder">等待系统连接</div>
+                </div>
+              </section>
+            </div>
+          </div>
+        </aside>
+      </div>
+    </div>
+
+    <dialog class="history-dialog account-security-dialog" id="accountSecurityDialog">
+      <div class="account-security-body">
+        <div class="history-dialog-heading account-security-heading">
+          <span class="section-kicker">本机账号</span>
+          <h3>账号安全</h3>
+          <p>每台电脑只使用当前这一个账号。这里可以修改密码或重新生成恢复码，不能创建第二个账号。</p>
+          <button class="dialog-close-icon" type="button" aria-label="关闭账号安全" data-dialog-close="accountSecurityDialog">×</button>
+        </div>
+
+        <div class="account-security-status">
+          <span>当前账号</span>
+          <strong id="accountSecurityUsername">—</strong>
+          <span id="accountRecoveryStatus">正在检查恢复码</span>
+        </div>
+
+        <section class="account-security-section">
+          <div>
+            <h4>修改登录密码</h4>
+            <p>修改成功后，当前登录会立即退出，请使用新密码重新登录。</p>
+          </div>
+          <form id="changePasswordForm">
+            <label class="field">
+              <span>当前密码 *</span>
+              <input id="currentPassword" type="password" autocomplete="current-password" required />
+            </label>
+            <label class="field">
+              <span>新密码 *</span>
+              <input id="newPassword" type="password" minlength="8" autocomplete="new-password" required />
+            </label>
+            <label class="field">
+              <span>再次输入新密码 *</span>
+              <input id="newPasswordConfirm" type="password" minlength="8" autocomplete="new-password" required />
+            </label>
+            <p class="account-security-message" id="changePasswordMessage" role="status"></p>
+            <button class="primary-btn" id="changePasswordBtn" type="submit">修改密码并退出</button>
+          </form>
+        </section>
+
+        <section class="account-security-section">
+          <div>
+            <h4>恢复码</h4>
+            <p>忘记密码时可用恢复码重置。新恢复码只显示一次，生成后旧恢复码立即失效。</p>
+          </div>
+          <form id="recoveryCodeForm">
+            <label class="field">
+              <span>当前密码 *</span>
+              <input id="recoveryCurrentPassword" type="password" autocomplete="current-password" required />
+            </label>
+            <p class="account-security-message" id="recoveryCodeMessage" role="status"></p>
+            <button class="secondary-btn" id="recoveryCodeBtn" type="submit">重新生成恢复码</button>
+          </form>
+          <div class="account-recovery-result hidden" id="accountRecoveryResult">
+            <span>请立即离线保存，关闭后无法再次查看</span>
+            <code id="accountRecoveryCode"></code>
+            <button class="secondary-btn" id="copyAccountRecoveryCode" type="button">复制恢复码</button>
+          </div>
+        </section>
+
+        <div class="history-dialog-actions">
+          <button class="secondary-btn" type="button" data-dialog-close="accountSecurityDialog">关闭</button>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog class="history-dialog" id="historyBackupDialog">
+      <form method="dialog" id="historyBackupForm">
+        <div class="history-dialog-heading">
+          <span class="section-kicker">加密导出</span>
+          <h3>创建完整历史备份</h3>
+          <p>备份包含任务正文、审核结果和已归档报告，不包含账号、密码、Cookie或浏览器会话。</p>
+        </div>
+        <label class="field">
+          <span>备份口令 *</span>
+          <input id="historyBackupPassphrase" type="password" minlength="8" autocomplete="new-password" required />
+          <small>至少8个字符。忘记口令后无法恢复，系统不会保存这段口令。</small>
+        </label>
+        <label class="field">
+          <span>再次输入口令 *</span>
+          <input id="historyBackupPassphraseConfirm" type="password" minlength="8" autocomplete="new-password" required />
+        </label>
+        <div class="history-dialog-actions">
+          <button class="secondary-btn" value="cancel" type="button" data-dialog-close="historyBackupDialog">取消</button>
+          <button class="primary-btn" id="confirmHistoryBackupBtn" type="submit">创建并下载</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="history-dialog" id="historyRestoreDialog">
+      <form method="dialog" id="historyRestoreForm">
+        <div class="history-dialog-heading">
+          <span class="section-kicker">校验恢复</span>
+          <h3>从加密备份恢复</h3>
+          <p>恢复前会验证口令、文件清单和哈希；同编号但内容不同的任务不会被覆盖。</p>
+        </div>
+        <label class="field">
+          <span>选择备份文件 *</span>
+          <input id="historyRestoreFile" type="file" accept=".aombak,application/octet-stream" required />
+          <small>只接受本系统生成的 .aombak 文件，当前最大64MB。</small>
+        </label>
+        <label class="field">
+          <span>备份口令 *</span>
+          <input id="historyRestorePassphrase" type="password" minlength="8" autocomplete="current-password" required />
+        </label>
+        <div class="history-dialog-actions">
+          <button class="secondary-btn" value="cancel" type="button" data-dialog-close="historyRestoreDialog">取消</button>
+          <button class="primary-btn" id="confirmHistoryRestoreBtn" type="submit">校验并恢复</button>
+        </div>
+      </form>
+    </dialog>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>

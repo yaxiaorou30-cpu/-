@@ -1,0 +1,40 @@
+id: "risk_report"
+name: "舆情通报（风险研判类）"
+description: "根据采集证据生成重点风险线索分析报告"
+sections:
+  - id: title
+    content: "关于{{ event_keyword }}的风险线索分析报告"
+    is_title: true
+    generator: "field_replace"
+    dependencies: ["event_keyword"]
+
+  - id: summary
+    name: "内容摘要"
+    generator: "rule"
+    rule_class: "GroundedSummaryRule"
+    dependencies: ["task_topic", "total_posts", "platform_dist", "evidence_samples", "data_limitations"]
+
+  - id: keywords
+    name: "关键词与关注点"
+    generator: "rule"
+    rule_class: "GroundedKeywordsRule"
+    dependencies: ["top_keywords", "evidence_samples"]
+
+  - id: background
+    name: "传播概况与事实边界"
+    generator: "rule"
+    rule_class: "GroundedBackgroundRule"
+    dependencies: ["total_posts", "confirmed_time_count", "evidence_samples"]
+
+  - id: analysis
+    name: "主要观点与研判"
+    generator: "rule"
+    rule_class: "GroundedAnalysisRule"
+    dependencies: ["platform_dist", "content_category_dist", "human_reviewed_count", "sentiment_ratio", "evidence_samples", "data_limitations"]
+
+  - id: recommendations
+    name: "待核查事项与工作建议"
+    generator: "rule"
+    rule_class: "GroundedRecommendationsRule"
+    dependencies: ["evidence_samples"]
+    require_manual_review: true

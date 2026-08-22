@@ -1,0 +1,33 @@
+app_name: "AI+舆情检测系统"
+version: "1.0.0"
+
+# 路径配置
+templates_dir: "config/templates"
+templates_docx_dir: "templates_docx"
+output_dir: "output"
+
+# 分析引擎配置
+analyzer:
+  sentiment_method: "conservative_rules"  # 保守关键词初判，避免把无明确态度的事实文本误判为正负面
+  keyword_topk: 10
+  keyword_method: "tfidf"    # 可选: tfidf, textrank
+
+# LLM 配置 (完全离线)
+llm:
+  enabled: false              # 默认关闭，需手动开启并配置模型
+  backend: "ollama"           # 可选: ollama, llama_cpp
+  base_url: "http://localhost:11434"
+  model_name: "qwen:7b"
+  max_tokens: 2048
+  temperature: 0.7
+
+# 日志配置
+logging:
+  level: "INFO"
+  desensitize: true           # 启用日志脱敏
+  log_fields: ["content", "author", "title"]  # 需要脱敏的字段
+
+# 生成器后处理
+post_process:
+  sensitive_words_file: null  # 敏感词替换表路径，null表示不启用
+  default_max_words: 800

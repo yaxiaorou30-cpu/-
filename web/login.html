@@ -1,0 +1,464 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="舆情研判工作台本机用户登录">
+  <title>系统登录 - 舆情研判工作台</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: "Microsoft YaHei UI", "PingFang SC", system-ui, sans-serif;
+      --ink-950: #071725;
+      --ink-900: #0b2033;
+      --ink-800: #15364f;
+      --ink-600: #486479;
+      --ink-500: #6a7f8f;
+      --ink-300: #afbec8;
+      --ink-200: #d4dee5;
+      --ink-100: #e7edf1;
+      --canvas: #edf2f5;
+      --blue-700: #0c5489;
+      --blue-600: #1369a8;
+      --blue-050: #eef7fc;
+      --red-700: #a62a20;
+      --amber-100: #f7e7c4;
+      --amber-700: #8a5208;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 28px;
+      background: var(--canvas);
+      color: var(--ink-900);
+    }
+    main {
+      display: grid;
+      grid-template-columns: minmax(300px, .86fr) minmax(380px, 1fr);
+      width: min(920px, 100%);
+      min-height: 540px;
+      overflow: hidden;
+      border-radius: 12px;
+      background: #fff;
+      box-shadow: 0 8px 24px rgba(7, 23, 37, .12);
+    }
+    .context-panel {
+      display: flex;
+      flex-direction: column;
+      padding: 42px 38px;
+      color: #dbe7ef;
+      background: var(--ink-900);
+    }
+    .brand { display: flex; align-items: center; gap: 12px; }
+    .brand-mark {
+      display: grid;
+      width: 42px;
+      height: 42px;
+      place-items: center;
+      border: 1px solid rgba(135, 203, 238, .52);
+      border-radius: 7px;
+      color: #e5f5fd;
+      background: #16466a;
+      font-size: 19px;
+      font-weight: 800;
+    }
+    .brand-copy { display: grid; line-height: 1.3; }
+    .brand-copy strong { color: #fff; font-size: 17px; letter-spacing: .04em; }
+    .brand-copy span { color: #8fa9bb; font-size: 11px; }
+    .context-copy { margin-top: auto; }
+    .context-copy h1 {
+      max-width: 310px;
+      margin: 0 0 12px;
+      color: #fff;
+      font-size: 29px;
+      line-height: 1.3;
+    }
+    .context-copy > p { margin: 0; color: #a9bdca; line-height: 1.75; }
+    .workflow {
+      display: grid;
+      gap: 12px;
+      margin-top: 30px;
+      padding-top: 24px;
+      border-top: 1px solid rgba(255, 255, 255, .12);
+    }
+    .workflow div { display: grid; grid-template-columns: 28px 1fr; align-items: start; gap: 10px; }
+    .workflow strong {
+      display: grid;
+      width: 24px;
+      height: 24px;
+      place-items: center;
+      border-radius: 50%;
+      color: #dff5ff;
+      background: #174466;
+      font: 700 10px Consolas, monospace;
+    }
+    .workflow span { color: #b9ceda; font-size: 12px; }
+    .login-panel { display: flex; align-items: center; padding: 46px 52px; }
+    .login-content { width: 100%; }
+    .security-label {
+      color: var(--blue-700);
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: .1em;
+    }
+    h2 { margin: 5px 0 6px; color: var(--ink-950); font-size: 25px; }
+    .intro { margin: 0 0 25px; color: var(--ink-500); line-height: 1.65; }
+    label { display: grid; gap: 7px; margin-top: 16px; color: var(--ink-800); font-size: 12px; font-weight: 700; }
+    input {
+      width: 100%;
+      min-height: 44px;
+      padding: 9px 11px;
+      border: 1px solid var(--ink-300);
+      border-radius: 6px;
+      color: var(--ink-900);
+      background: #fff;
+      font: inherit;
+    }
+    input:hover { border-color: var(--ink-600); }
+    input:focus { outline: 3px solid rgba(19, 105, 168, .14); border-color: var(--blue-600); }
+    button {
+      width: 100%;
+      min-height: 44px;
+      margin-top: 23px;
+      border: 1px solid var(--blue-600);
+      border-radius: 6px;
+      color: #fff;
+      background: var(--blue-600);
+      font: inherit;
+      font-weight: 800;
+      cursor: pointer;
+    }
+    button:hover { border-color: var(--blue-700); background: var(--blue-700); }
+    button:focus-visible { outline: 3px solid rgba(19, 105, 168, .22); outline-offset: 2px; }
+    button:disabled { opacity: .65; cursor: wait; }
+    .message { min-height: 22px; margin: 13px 0 0; color: var(--red-700); line-height: 1.55; }
+    .text-button {
+      width: auto;
+      min-height: 0;
+      margin: 12px 0 0;
+      padding: 0;
+      border: 0;
+      color: var(--blue-700);
+      background: transparent;
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .text-button:hover { border: 0; color: var(--blue-600); background: transparent; text-decoration: underline; }
+    .form-actions { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+    .form-actions button[type="submit"] { width: auto; min-width: 150px; }
+    .success-panel {
+      padding: 18px;
+      border: 1px solid #9bcabf;
+      border-radius: 7px;
+      background: #eff9f6;
+    }
+    .success-panel h2 { margin-top: 0; }
+    .success-panel p { color: var(--ink-600); line-height: 1.65; }
+    .recovery-code {
+      margin: 14px 0;
+      padding: 14px;
+      border: 1px dashed var(--blue-600);
+      border-radius: 6px;
+      color: var(--ink-950);
+      background: #fff;
+      font: 800 17px/1.5 Consolas, monospace;
+      letter-spacing: .04em;
+      text-align: center;
+      user-select: all;
+    }
+    .compact-button { margin-top: 10px; background: var(--ink-800); border-color: var(--ink-800); }
+    .compact-button:hover { background: var(--ink-900); border-color: var(--ink-900); }
+    .boundary-note {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 20px;
+      padding-top: 17px;
+      border-top: 1px solid var(--ink-100);
+      color: var(--ink-500);
+      font-size: 11px;
+    }
+    .boundary-note::before {
+      width: 7px;
+      height: 7px;
+      flex: 0 0 7px;
+      border-radius: 50%;
+      background: #1a8b7f;
+      content: "";
+    }
+    [hidden] { display: none !important; }
+    @media (max-width: 760px) {
+      body { padding: 16px; }
+      main { grid-template-columns: 1fr; min-height: 0; }
+      .context-panel { padding: 23px; }
+      .context-copy { margin-top: 36px; }
+      .context-copy h1 { font-size: 23px; }
+      .workflow { display: none; }
+      .login-panel { padding: 30px 24px 34px; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { transition-duration: .01ms !important; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <section class="context-panel">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">舆</span>
+        <span class="brand-copy">
+          <strong>舆情研判</strong>
+          <span>本机作业工作台</span>
+        </span>
+      </div>
+      <div class="context-copy">
+        <h1>从公开线索到可复核报告</h1>
+        <p>采集、审核与报告生成集中在当前设备，原始来源始终可追溯。</p>
+        <div class="workflow" aria-label="主要工作流程">
+          <div><strong>01</strong><span>设置事件关键词和采集边界</span></div>
+          <div><strong>02</strong><span>核验来源，人工筛选有效线索</span></div>
+          <div><strong>03</strong><span>保留证据链接，生成 Word 通报</span></div>
+        </div>
+      </div>
+    </section>
+    <section class="login-panel">
+      <div class="login-content" id="loginView">
+        <span class="security-label">AUTHORIZED ACCESS</span>
+        <h2>登录系统</h2>
+        <p class="intro">当前电脑只使用一个本机账号。系统账号与社交平台采集账号相互独立。</p>
+        <form id="loginForm">
+          <label>系统账号
+            <input id="username" name="username" autocomplete="username" maxlength="64" required autofocus>
+          </label>
+          <label>密码
+            <input id="password" name="password" type="password" autocomplete="current-password" maxlength="1024" required>
+          </label>
+          <button id="loginButton" type="submit">进入工作台</button>
+        </form>
+        <p id="message" class="message" role="alert" aria-live="polite"></p>
+        <button class="text-button" id="showRecoveryButton" type="button">忘记密码，使用恢复码</button>
+        <p class="boundary-note">账号仅保护软件入口；业务数据仍需由当前Windows账户和目录权限保护。</p>
+      </div>
+
+      <div class="login-content" id="setupView" hidden>
+        <span class="security-label">FIRST RUN</span>
+        <h2>设置本机账号</h2>
+        <p class="intro">这是当前电脑第一次运行。创建后只能使用这一个账号，不再开放新增账号入口。</p>
+        <form id="setupForm">
+          <label>系统账号
+            <input id="setupUsername" autocomplete="username" maxlength="64" required>
+          </label>
+          <label>密码
+            <input id="setupPassword" type="password" autocomplete="new-password" minlength="8" maxlength="1024" required>
+          </label>
+          <label>再次输入密码
+            <input id="setupPasswordConfirm" type="password" autocomplete="new-password" minlength="8" maxlength="1024" required>
+          </label>
+          <button id="setupButton" type="submit">创建本机账号</button>
+        </form>
+        <p id="setupMessage" class="message" role="alert" aria-live="polite"></p>
+        <p class="boundary-note">系统会生成一份只显示一次的恢复码，请离线保存。</p>
+      </div>
+
+      <div class="login-content" id="recoveryView" hidden>
+        <span class="security-label">ACCOUNT RECOVERY</span>
+        <h2>使用恢复码重置密码</h2>
+        <p class="intro">恢复成功后，旧密码、旧会话和旧恢复码都会立即失效。</p>
+        <form id="recoveryForm">
+          <label>系统账号
+            <input id="recoveryUsername" autocomplete="username" maxlength="64" required>
+          </label>
+          <label>恢复码
+            <input id="recoveryCode" autocomplete="off" maxlength="40" required>
+          </label>
+          <label>新密码
+            <input id="recoveryPassword" type="password" autocomplete="new-password" minlength="8" maxlength="1024" required>
+          </label>
+          <label>再次输入新密码
+            <input id="recoveryPasswordConfirm" type="password" autocomplete="new-password" minlength="8" maxlength="1024" required>
+          </label>
+          <div class="form-actions">
+            <button class="text-button" id="backToLoginButton" type="button">返回登录</button>
+            <button id="recoveryButton" type="submit">重置密码</button>
+          </div>
+        </form>
+        <p id="recoveryMessage" class="message" role="alert" aria-live="polite"></p>
+      </div>
+
+      <div class="login-content success-panel" id="recoveryResultView" hidden>
+        <span class="security-label">KEEP OFFLINE</span>
+        <h2>请保存恢复码</h2>
+        <p id="recoveryResultMessage">恢复码只在此处显示一次。建议抄写到纸质说明书中并妥善保管，不要截图上传到网络。</p>
+        <div class="recovery-code" id="recoveryResultCode"></div>
+        <button class="compact-button" id="copyRecoveryCodeButton" type="button">复制恢复码</button>
+        <button id="continueButton" type="button">我已保存，进入工作台</button>
+      </div>
+    </section>
+  </main>
+  <script>
+    const loginView = document.getElementById("loginView");
+    const setupView = document.getElementById("setupView");
+    const recoveryView = document.getElementById("recoveryView");
+    const recoveryResultView = document.getElementById("recoveryResultView");
+    const form = document.getElementById("loginForm");
+    const username = document.getElementById("username");
+    const password = document.getElementById("password");
+    const button = document.getElementById("loginButton");
+    const message = document.getElementById("message");
+    const setupForm = document.getElementById("setupForm");
+    const setupUsername = document.getElementById("setupUsername");
+    const setupPassword = document.getElementById("setupPassword");
+    const setupPasswordConfirm = document.getElementById("setupPasswordConfirm");
+    const setupButton = document.getElementById("setupButton");
+    const setupMessage = document.getElementById("setupMessage");
+    const recoveryForm = document.getElementById("recoveryForm");
+    const recoveryUsername = document.getElementById("recoveryUsername");
+    const recoveryCode = document.getElementById("recoveryCode");
+    const recoveryPassword = document.getElementById("recoveryPassword");
+    const recoveryPasswordConfirm = document.getElementById("recoveryPasswordConfirm");
+    const recoveryButton = document.getElementById("recoveryButton");
+    const recoveryMessage = document.getElementById("recoveryMessage");
+    const recoveryResultCode = document.getElementById("recoveryResultCode");
+    const recoveryResultMessage = document.getElementById("recoveryResultMessage");
+
+    function showView(target) {
+      [loginView, setupView, recoveryView, recoveryResultView].forEach((view) => {
+        view.hidden = view !== target;
+      });
+    }
+
+    function showRecoveryResult(code, text) {
+      recoveryResultCode.textContent = code;
+      recoveryResultMessage.textContent = text;
+      showView(recoveryResultView);
+    }
+
+    async function authStatus() {
+      try {
+        const response = await fetch("/api/auth/status", { cache: "no-store" });
+        const payload = await response.json();
+        if (payload.authenticated) {
+          location.replace("/");
+          return;
+        }
+        if (payload.setup_required) {
+          showView(setupView);
+          setupUsername.focus();
+          return;
+        }
+        showView(loginView);
+        if (payload.account_unavailable) {
+          message.textContent = "本机账号当前不可用，请联系交付维护人员。";
+          button.disabled = true;
+        }
+      } catch (_error) {
+        message.textContent = "无法连接本机服务，请确认程序仍在运行。";
+      }
+    }
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      button.disabled = true;
+      message.textContent = "正在验证…";
+      try {
+        const response = await fetch("/api/auth/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ username: username.value, password: password.value }),
+        });
+        const payload = await response.json();
+        password.value = "";
+        if (!response.ok || !payload.ok) throw new Error(payload.message || "登录失败");
+        location.replace("/");
+      } catch (error) {
+        message.textContent = error.message || "登录失败";
+        button.disabled = false;
+        password.focus();
+      }
+    });
+
+    setupForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      setupButton.disabled = true;
+      setupMessage.textContent = "正在创建本机账号…";
+      try {
+        const response = await fetch("/api/auth/setup", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            username: setupUsername.value,
+            password: setupPassword.value,
+            password_confirmation: setupPasswordConfirm.value,
+          }),
+        });
+        const payload = await response.json();
+        setupPassword.value = "";
+        setupPasswordConfirm.value = "";
+        if (!response.ok || !payload.ok) throw new Error(payload.message || "账号创建失败");
+        showRecoveryResult(payload.recovery_code, "本机账号已创建。恢复码只显示一次，请离线保存。");
+      } catch (error) {
+        setupMessage.textContent = error.message || "账号创建失败";
+        setupButton.disabled = false;
+      }
+    });
+
+    document.getElementById("showRecoveryButton").addEventListener("click", () => {
+      recoveryUsername.value = username.value;
+      recoveryMessage.textContent = "";
+      showView(recoveryView);
+      recoveryUsername.focus();
+    });
+
+    document.getElementById("backToLoginButton").addEventListener("click", () => {
+      showView(loginView);
+      username.focus();
+    });
+
+    recoveryForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      recoveryButton.disabled = true;
+      recoveryMessage.textContent = "正在校验恢复码…";
+      try {
+        const response = await fetch("/api/auth/recover", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            username: recoveryUsername.value,
+            recovery_code: recoveryCode.value,
+            new_password: recoveryPassword.value,
+            password_confirmation: recoveryPasswordConfirm.value,
+          }),
+        });
+        const payload = await response.json();
+        recoveryCode.value = "";
+        recoveryPassword.value = "";
+        recoveryPasswordConfirm.value = "";
+        if (!response.ok || !payload.ok) throw new Error(payload.message || "密码重置失败");
+        showRecoveryResult(payload.recovery_code, "密码已重置。旧密码、旧会话和旧恢复码均已失效，请保存新的恢复码。");
+      } catch (error) {
+        recoveryMessage.textContent = error.message || "密码重置失败";
+        recoveryButton.disabled = false;
+      }
+    });
+
+    document.getElementById("copyRecoveryCodeButton").addEventListener("click", async (event) => {
+      try {
+        await navigator.clipboard.writeText(recoveryResultCode.textContent);
+        event.currentTarget.textContent = "已复制";
+      } catch (_error) {
+        event.currentTarget.textContent = "请手动选中复制";
+      }
+    });
+
+    document.getElementById("continueButton").addEventListener("click", () => {
+      recoveryResultCode.textContent = "";
+      location.replace("/");
+    });
+
+    authStatus();
+  </script>
+</body>
+</html>

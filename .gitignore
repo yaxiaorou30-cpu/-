@@ -1,0 +1,42 @@
+# Local credentials and authenticated browser state
+data/system_users.secure.json
+data/social_accounts.secure.json
+data/browser_profiles/
+data/debug/
+data/private/
+data/source_policy_cache.json
+data/monitoring/
+data/history_archive/
+data/task_history.json
+data/latest_news.json
+data/latest_news_meta.json
+data/
+output/
+
+# Local third-party checkouts and crawler runtimes
+opensource_candidates/
+.scrapling-venv/
+.scrapling-runtime/
+playwright-browsers/
+
+# Python and test artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.pytest_tmp/
+pytest-cache-files-*/
+/tmpavbc24aq/
+
+# Logs and coverage output
+*.log
+.coverage
+htmlcov/
+
+# Local environment and credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+.venv/
+.uv-cache/
