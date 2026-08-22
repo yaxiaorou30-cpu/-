@@ -8,12 +8,13 @@ import json
 import re
 import random
 import time
+import xml.etree.ElementTree as ET
 from email.utils import parsedate_to_datetime
 from http.cookies import SimpleCookie
 from datetime import datetime, timedelta
 from typing import Callable, List, Dict, Optional, Tuple
 from pathlib import Path
-from urllib.parse import parse_qs, quote, unquote, urljoin, urlparse
+from urllib.parse import parse_qs, quote, unquote, urlencode, urljoin, urlparse
 
 try:
     import requests
@@ -206,6 +207,14 @@ STABLE_SOURCE_REGISTRY = [
 ]
 
 STABLE_CHANNELS = {source["name"] for source in STABLE_SOURCE_REGISTRY}
+PUBLIC_NEWS_SOURCE = {
+    "name": "Bing News RSS",
+    "platform": "Bing 新闻",
+    "parser": "bing_news_rss",
+    "source_group": "public_news",
+    "url": "https://www.bing.com/news/search",
+    "timeout": 12,
+}
 SOCIAL_ENHANCEMENT_PLATFORMS = {
     "微博",
     "知乎",
@@ -696,10 +705,33 @@ class NewsCrawler:
         candidates = []
         content_type = resp.headers.get("Content-Type", "") if getattr(resp, "headers", None) else ""
         header_match = re.search(r"charset=([A-Za-z0-9_\-]+)", content_type, re.I)
+        header_encoding = header_match.group(1) if header_match else ""
         if header_match:
-            candidates.append(header_match.group(1))
+            candidates.append(header_encoding)
 
         head = content[:4096]
+        xml_match = re.match(
+            br"\s*<\?xml[^>]+encoding=[\"']\s*([A-Za-z0-9_\-]+)",
+            head,
+            re.I,
+        )
+        is_xml = "xml" in content_type.casefold() or xml_match is not None
+        xml_encoding = ""
+        if xml_match:
+            xml_encoding = xml_match.group(1).decode("ascii", errors="ignore")
+            candidates.append(xml_encoding)
+        if is_xml:
+            declared_xml_encodings = [
+                encoding
+                for encoding in (xml_encoding, header_encoding)
+                if encoding
+            ] or ["utf-8"]
+            for encoding in declared_xml_encodings:
+                try:
+                    return content.decode(encoding, errors="strict")
+                except (LookupError, UnicodeDecodeError):
+                    continue
+
         meta_match = re.search(br"<meta[^>]+charset=[\"']?\s*([A-Za-z0-9_\-]+)", head, re.I)
         if meta_match:
             try:
@@ -2389,6 +2421,28 @@ class NewsCrawler:
             region_kw = f"{province or ''}{city}"
         return f"{keyword} {region_kw}".strip() if region_kw else keyword
 
+    def _build_public_news_source_requests(
+        self,
+        keyword: str,
+        province: Optional[str],
+        city: Optional[str],
+    ) -> List[Dict]:
+        """生成公开新闻发现请求；结果数量由统一 collector 限制。"""
+        query = self._build_search_query(keyword, province, city)
+        params = urlencode({
+            "q": query,
+            "qft": 'sortbydate="1"',
+            "format": "RSS",
+        })
+        return [{
+            "channel": PUBLIC_NEWS_SOURCE["name"],
+            "platform": PUBLIC_NEWS_SOURCE["platform"],
+            "source_group": PUBLIC_NEWS_SOURCE["source_group"],
+            "parser": PUBLIC_NEWS_SOURCE["parser"],
+            "url": f"{PUBLIC_NEWS_SOURCE['url']}?{params}",
+            "timeout": PUBLIC_NEWS_SOURCE["timeout"],
+        }]
+
     def _build_stable_source_requests(
         self,
         keyword: str,
@@ -2751,7 +2805,7 @@ class NewsCrawler:
                     self._enrich_with_xiaohongshu_detail_content(record)
                     if not self._is_valid_social_record_url(record, platform, source_group):
                         record["url"] = initial_url
-                should_enrich_article = (
+                should_enrich_article = source_group != "public_news" and (
                     len(record.get("content", "")) < 80
                     or channel == "官方公开网页"
                 )
@@ -2935,11 +2989,19 @@ class NewsCrawler:
         results = []
         
         try:
-            soup = BeautifulSoup(html, "html.parser")
             parser = self._active_parser_hint or next(
                 (source.get("parser") for source in STABLE_SOURCE_REGISTRY if source.get("name") == channel),
                 "",
             )
+            if parser == "bing_news_rss":
+                return self._parse_bing_news_rss(
+                    html,
+                    keyword=keyword,
+                    platform=platform,
+                    channel=channel,
+                )
+
+            soup = BeautifulSoup(html, "html.parser")
             social_search_channel = (
                 platform in SOCIAL_PLATFORM_ADAPTERS
                 and not parser
@@ -2977,6 +3039,95 @@ class NewsCrawler:
 
         except Exception as e:
             logger.warning(f"{platform} 解析失败: {e}")
+
+        return self._deduplicate_results(results)
+
+    def _parse_bing_news_rss(
+        self,
+        xml_text: str,
+        keyword: str,
+        platform: str,
+        channel: str,
+    ) -> List[Dict]:
+        """解析受限大小的 Bing News RSS，并还原每条新闻的原文 URL。"""
+        text = str(xml_text or "")
+        if not text.strip() or len(text) > 2 * 1024 * 1024:
+            return []
+        if re.search(r"<!\s*(?:DOCTYPE|ENTITY)\b", text, re.I):
+            logger.warning("Bing News RSS 包含不允许的 XML 实体声明")
+            return []
+
+        try:
+            root = ET.fromstring(text)
+        except ET.ParseError as exc:
+            logger.warning(f"Bing News RSS XML 解析失败: {exc}")
+            return []
+
+        def local_name(tag) -> str:
+            return str(tag or "").rsplit("}", 1)[-1].rsplit(":", 1)[-1].casefold()
+
+        def child_text(element, field_name: str) -> str:
+            target = field_name.casefold()
+            for child in list(element):
+                if local_name(child.tag) == target:
+                    return "".join(child.itertext()).strip()
+            return ""
+
+        results = []
+        for item in (node for node in root.iter() if local_name(node.tag) == "item"):
+            if len(results) >= 50:
+                break
+            title = self._clean_text(child_text(item, "title"))
+            raw_link = child_text(item, "link")
+            try:
+                url = str(raw_link or "").strip()
+                if url.startswith("//"):
+                    url = "https:" + url
+                elif not url.startswith(("http://", "https://")):
+                    url = urljoin(PUBLIC_NEWS_SOURCE["url"], url)
+                raw_parsed_url = urlparse(url)
+                raw_host = (raw_parsed_url.hostname or "").casefold().strip(".")
+                is_bing_wrapper = (
+                    (raw_host == "bing.com" or raw_host.endswith(".bing.com"))
+                    and raw_parsed_url.path.casefold() == "/news/apiclick.aspx"
+                )
+                if is_bing_wrapper:
+                    url = self._normalize_url(url, PUBLIC_NEWS_SOURCE["url"])
+                elif raw_parsed_url.fragment:
+                    url = raw_parsed_url._replace(fragment="").geturl()
+                parsed_url = urlparse(url)
+                if (
+                    parsed_url.scheme not in {"http", "https"}
+                    or not parsed_url.hostname
+                    or parsed_url.username
+                    or parsed_url.password
+                ):
+                    continue
+                normalized_host = parsed_url.hostname.casefold().strip(".")
+            except ValueError:
+                continue
+            if (
+                (normalized_host == "bing.com" or normalized_host.endswith(".bing.com"))
+                and parsed_url.path.casefold() == "/news/apiclick.aspx"
+            ):
+                continue
+
+            raw_description = child_text(item, "description")
+            content = self._clean_text(
+                BeautifulSoup(raw_description, "html.parser").get_text(" ", strip=True)
+            )
+            source = self._clean_text(child_text(item, "source")) or platform
+            results.append({
+                "title": title[:160],
+                "content": content[:1000],
+                "url": url,
+                "source": source[:80],
+                "platform": platform,
+                "pub_time": self._clean_text(child_text(item, "pubDate")),
+                "collector": channel,
+                "search_origin": "bing_news_rss",
+                "keyword": keyword,
+            })
 
         return self._deduplicate_results(results)
 

@@ -244,6 +244,27 @@ class SourceAccessPolicyTests(unittest.TestCase):
         )
         self.assertIn(SOURCE_POLICY_PRODUCT_TOKEN, SOURCE_POLICY_USER_AGENT)
 
+    def test_production_registry_allows_bing_news_rss_search_path(self):
+        policy = SourceAccessPolicy(
+            Path("config") / "source_access_rules.json",
+            fetcher=lambda *args, **kwargs: FakeResponse(
+                200,
+                b"User-agent: *\nDisallow: /search\n",
+                args[0],
+            ),
+        )
+
+        allowed = policy.check(
+            "https://www.bing.com/news/search?q=test&format=RSS",
+            "Bing News RSS",
+        )
+        unrelated = policy.check("https://www.bing.com/account/private", "Bing News RSS")
+
+        self.assertTrue(allowed.allowed)
+        self.assertEqual(allowed.source_rule_id, "SRC-PUBLIC-BING-NEWS")
+        self.assertEqual(allowed.support_level, "S2")
+        self.assertEqual(unrelated.code, "path_not_registered")
+
 
 if __name__ == "__main__":
     unittest.main()

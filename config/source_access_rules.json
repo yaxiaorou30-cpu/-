@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-07-28",
+  "updated_at": "2026-08-23",
   "robots_cache_ttl_seconds": 21600,
   "default_rule": {
     "id": "SRC-UNREGISTERED",
@@ -18,6 +18,22 @@
     "denied_path_prefixes": []
   },
   "sources": [
+    {
+      "id": "SRC-PUBLIC-BING-NEWS",
+      "name": "Bing News RSS",
+      "domains": ["bing.com"],
+      "access_type": "A0",
+      "support_level": "S2",
+      "automation_enabled": true,
+      "robots_required": true,
+      "external_adapter_allowed": false,
+      "platform_rule_status": "2026-08-23 已实测 RSS 连通、原文 URL 还原和当前 robots 路径；按 best-effort 来源使用",
+      "owner": "项目技术负责人（待指定姓名）",
+      "last_rule_check": "2026-08-23",
+      "allowed_paths": ["/news/search", "/robots.txt"],
+      "allowed_path_prefixes": [],
+      "denied_path_prefixes": []
+    },
     {
       "id": "SRC-OFFICIAL-NIA",
       "name": "国家移民管理局移民管理要闻",

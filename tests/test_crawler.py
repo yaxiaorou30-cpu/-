@@ -1,6 +1,7 @@
 import json
 import unittest
 from datetime import datetime, timedelta
+from urllib.parse import parse_qs, urlparse
 
 from src.analyzer import Analyzer
 from src.crawler import (
@@ -33,6 +34,207 @@ class NewsCrawler(ProductionNewsCrawler):
 class CrawlerParsingTests(unittest.TestCase):
     def setUp(self):
         self.crawler = NewsCrawler()
+
+    @staticmethod
+    def _bing_news_rss_fixture():
+        return """<?xml version="1.0" encoding="utf-8"?>
+        <rss version="2.0"
+             xmlns:News="https://www.bing.com/news/search?q=test&amp;format=RSS">
+          <channel>
+            <title>Bing News Search</title>
+            <link>https://www.bing.com/news/search?q=test</link>
+            <item>
+              <title>第一条公开新闻</title>
+              <link>https://news.example.com/a?id=1&amp;from=rss</link>
+              <description><![CDATA[<p>第一条新闻的公开摘要。</p>]]></description>
+              <pubDate>Sat, 22 Aug 2026 12:10:11 GMT</pubDate>
+              <News:Source>示例日报</News:Source>
+            </item>
+            <item>
+              <title>第二条公开新闻</title>
+              <link>https://www.bing.com/news/apiclick.aspx?ref=FexRss&amp;tid=abc&amp;url=https%3A%2F%2Fother.example.org%2Fb%3Fid%3D2&amp;c=1&amp;mkt=zh-cn</link>
+              <description><![CDATA[第二条新闻的公开摘要。]]></description>
+              <pubDate>Sat, 22 Aug 2026 11:00:00 GMT</pubDate>
+              <News:Source>另一家媒体</News:Source>
+            </item>
+          </channel>
+        </rss>"""
+
+    def test_bing_news_rss_request_uses_keyword_region_and_rss_format(self):
+        requests = self.crawler._build_public_news_source_requests(
+            keyword="跨来源检索",
+            province="天津市",
+            city=None,
+        )
+
+        self.assertEqual(len(requests), 1)
+        request = requests[0]
+        query = parse_qs(urlparse(request["url"]).query)
+        self.assertEqual(query["q"], ["跨来源检索 天津市"])
+        self.assertEqual(query["qft"], ['sortbydate="1"'])
+        self.assertEqual(query["format"], ["RSS"])
+        self.assertEqual(request["source_group"], "public_news")
+        self.assertEqual(request["parser"], "bing_news_rss")
+        self.assertEqual(request["channel"], "Bing News RSS")
+        self.assertEqual(request["platform"], "Bing 新闻")
+        self.assertNotIn("setlang", query)
+        self.assertNotIn("mkt", query)
+        self.assertNotIn("cc", query)
+
+    def test_bing_news_rss_parser_returns_distinct_original_article_urls(self):
+        previous_parser = self.crawler._active_parser_hint
+        self.crawler._active_parser_hint = "bing_news_rss"
+        try:
+            items = self.crawler._parse_results(
+                "Bing 新闻",
+                self._bing_news_rss_fixture(),
+                "公开新闻",
+                "Bing News RSS",
+                "https://www.bing.com/news/search?q=test&format=RSS",
+            )
+        finally:
+            self.crawler._active_parser_hint = previous_parser
+
+        self.assertEqual(len(items), 2)
+        self.assertEqual(
+            {item["url"] for item in items},
+            {
+                "https://news.example.com/a?id=1&from=rss",
+                "https://other.example.org/b?id=2",
+            },
+        )
+        self.assertTrue(all("bing.com/news/apiclick" not in item["url"] for item in items))
+        self.assertEqual(items[0]["source"], "示例日报")
+        self.assertEqual(items[0]["content"], "第一条新闻的公开摘要。")
+        self.assertEqual(items[0]["pub_time"], "Sat, 22 Aug 2026 12:10:11 GMT")
+        self.assertTrue(all(item["search_origin"] == "bing_news_rss" for item in items))
+
+    def test_bing_news_rss_collection_normalizes_metadata_without_detail_fetch(self):
+        self.crawler._request_source_html = lambda **kwargs: (
+            self._bing_news_rss_fixture(),
+            kwargs["url"],
+            None,
+        )
+
+        def fail_if_detail_is_fetched(*args, **kwargs):
+            self.fail("RSS discovery must not fetch article detail pages in this slice")
+
+        self.crawler._enrich_with_article_content = fail_if_detail_is_fetched
+        records, failures = self.crawler._collect_from_source_requests(
+            source_requests=self.crawler._build_public_news_source_requests(
+                keyword="公开新闻",
+                province=None,
+                city=None,
+            ),
+            keyword="公开新闻",
+            region="全国",
+            collect_level="最小采集",
+            start_time=None,
+            end_time=None,
+            remaining=10,
+        )
+
+        self.assertEqual(failures, [])
+        self.assertEqual(len(records), 2)
+        self.assertTrue(all(item["source_group"] == "public_news" for item in records))
+        self.assertTrue(all(item["data_type"] == "real" for item in records))
+        self.assertTrue(all(item["search_origin"] == "bing_news_rss" for item in records))
+        self.assertTrue(all(item["time_basis"] == "published_time" for item in records))
+        self.assertTrue(all(datetime.fromisoformat(item["pub_time"]) for item in records))
+
+    def test_bing_news_rss_deduplicates_wrappers_for_same_article(self):
+        rss = """<?xml version="1.0" encoding="utf-8"?>
+        <rss version="2.0"><channel>
+          <item><title>短摘要</title>
+            <link>https://www.bing.com/news/apiclick.aspx?url=https%3A%2F%2Fnews.example.com%2Fsame</link>
+            <description>短</description></item>
+          <item><title>完整摘要</title>
+            <link>https://www.bing.com/news/apiclick.aspx?ref=two&amp;url=https%3A%2F%2Fnews.example.com%2Fsame</link>
+            <description>这是更完整的新闻摘要内容</description></item>
+        </channel></rss>"""
+
+        items = self.crawler._parse_bing_news_rss(
+            rss,
+            keyword="新闻",
+            platform="Bing 新闻",
+            channel="Bing News RSS",
+        )
+
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["url"], "https://news.example.com/same")
+        self.assertEqual(items[0]["content"], "这是更完整的新闻摘要内容")
+
+    def test_bing_news_rss_preserves_publisher_url_query_parameter(self):
+        rss = """<?xml version="1.0" encoding="utf-8"?>
+        <rss version="2.0"><channel><item>
+          <title>带原站跳转参数的新闻</title>
+          <link>https://publisher.example/read?url=https%3A%2F%2Fcdn.example%2Fvideo&amp;id=7</link>
+          <description>原站链接必须保留</description>
+        </item></channel></rss>"""
+
+        items = self.crawler._parse_bing_news_rss(
+            rss,
+            keyword="新闻",
+            platform="Bing 新闻",
+            channel="Bing News RSS",
+        )
+
+        self.assertEqual(len(items), 1)
+        self.assertEqual(
+            items[0]["url"],
+            "https://publisher.example/read?url=https%3A%2F%2Fcdn.example%2Fvideo&id=7",
+        )
+
+    def test_xml_response_honors_declared_utf8_before_encoding_heuristics(self):
+        class FakeResponse:
+            content = (
+                '<?xml version="1.0" encoding="utf-8"?>'
+                '<rss><title>人工智能新闻</title>'
+                '<link>https://news.example.com/中文路径</link></rss>'
+            ).encode("utf-8")
+            headers = {"Content-Type": "application/xml; charset=ISO-8859-1"}
+            apparent_encoding = "GB2312"
+            encoding = "ISO-8859-1"
+
+        text = self.crawler._decode_response_text(FakeResponse())
+
+        self.assertIn("人工智能新闻", text)
+        self.assertIn("/中文路径", text)
+
+    def test_bing_news_rss_rejects_late_doctype_declaration(self):
+        rss = (
+            '<?xml version="1.0" encoding="utf-8"?>'
+            + (" " * 5000)
+            + '<!DOCTYPE rss><rss><channel><item>'
+            '<title>不应解析</title><link>https://news.example.com/unsafe</link>'
+            '</item></channel></rss>'
+        )
+
+        items = self.crawler._parse_bing_news_rss(
+            rss,
+            keyword="新闻",
+            platform="Bing 新闻",
+            channel="Bing News RSS",
+        )
+
+        self.assertEqual(items, [])
+
+    def test_bing_news_rss_skips_malformed_url_without_losing_other_items(self):
+        rss = """<?xml version="1.0" encoding="utf-8"?>
+        <rss version="2.0"><channel>
+          <item><title>坏链接</title><link>http://[invalid</link></item>
+          <item><title>有效链接</title><link>https://news.example.com/valid</link></item>
+        </channel></rss>"""
+
+        items = self.crawler._parse_bing_news_rss(
+            rss,
+            keyword="新闻",
+            platform="Bing 新闻",
+            channel="Bing News RSS",
+        )
+
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["url"], "https://news.example.com/valid")
 
     def test_custom_date_range_includes_complete_end_date(self):
         start, end = self.crawler._parse_time_range("2026-07-01 至 2026-07-28")
