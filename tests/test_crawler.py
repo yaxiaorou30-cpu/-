@@ -109,17 +109,25 @@ class CrawlerParsingTests(unittest.TestCase):
         self.assertEqual(items[0]["pub_time"], "Sat, 22 Aug 2026 12:10:11 GMT")
         self.assertTrue(all(item["search_origin"] == "bing_news_rss" for item in items))
 
-    def test_bing_news_rss_collection_normalizes_metadata_without_detail_fetch(self):
+    def test_bing_news_rss_collection_enriches_each_original_article(self):
+        fixture = self._bing_news_rss_fixture().replace(
+            "第一条新闻的公开摘要。",
+            "这是长度超过八十字的公开新闻摘要，用于确认 RSS 已经提供较长摘要时，系统仍然会调用 Scrapling 获取原始文章详情，而不会因为摘要长度足够就跳过强模式。" * 2,
+        )
         self.crawler._request_source_html = lambda **kwargs: (
-            self._bing_news_rss_fixture(),
+            fixture,
             kwargs["url"],
             None,
         )
 
-        def fail_if_detail_is_fetched(*args, **kwargs):
-            self.fail("RSS discovery must not fetch article detail pages in this slice")
+        enriched_urls = []
 
-        self.crawler._enrich_with_article_content = fail_if_detail_is_fetched
+        def record_detail_enrichment(record):
+            enriched_urls.append(record["url"])
+            record["detail_enriched"] = True
+            record["detail_source"] = "scrapling_stealth"
+
+        self.crawler._enrich_with_article_content = record_detail_enrichment
         records, failures = self.crawler._collect_from_source_requests(
             source_requests=self.crawler._build_public_news_source_requests(
                 keyword="公开新闻",
@@ -141,6 +149,8 @@ class CrawlerParsingTests(unittest.TestCase):
         self.assertTrue(all(item["search_origin"] == "bing_news_rss" for item in records))
         self.assertTrue(all(item["time_basis"] == "published_time" for item in records))
         self.assertTrue(all(datetime.fromisoformat(item["pub_time"]) for item in records))
+        self.assertEqual(set(enriched_urls), {item["url"] for item in records})
+        self.assertTrue(all(item["detail_source"] == "scrapling_stealth" for item in records))
 
     def test_bing_news_rss_deduplicates_wrappers_for_same_article(self):
         rss = """<?xml version="1.0" encoding="utf-8"?>

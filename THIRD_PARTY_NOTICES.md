@@ -12,11 +12,11 @@
 | [MediaCrawler](https://github.com/NanmiCoder/MediaCrawler) | `17f66121e0fcc40fc23958b995bec873d422667d` | 非商业学习许可证 | 仅作架构参考，不复制代码、不作为交付运行依赖 |
 | [xiaohongshu-cli](https://github.com/jackwener/xiaohongshu-cli) | `4d63f3c0c85ccd9054fa8e96d7f761aaf2507449` | 当前检出的仓库缺少独立许可证文件 | 仅作行为参考，不复制代码、不运行 |
 | [weibo-cli](https://github.com/jackwener/weibo-cli) | `ea2e86e0b3c9fb4120660529a60ed7a44b2b90bb` | 当前检出的仓库缺少独立许可证文件 | 仅作行为参考，不复制代码、不运行 |
+| [Scrapling](https://github.com/D4Vinci/Scrapling) | PyPI `0.4.14` | BSD-3-Clause | 独立环境中的公开网页正文渲染与提取；默认使用 StealthyFetcher 强模式 |
 
 共同运行边界：
 
 - 只执行搜索、页面读取和结构化解析，不调用点赞、评论、发布、关注等写操作。
 - 凭据只从本机加密存储读取，并通过子进程标准输入传递；不得放入命令行参数、日志或输出。
-- 不破解验证码，不启用浏览器指纹改写，不自动注册账号，不使用代理池轮换规避平台限制。
-- 出现验证码、401/403/429、账号风控或平台权限限制时停止或退避，并明确提示人工恢复。
-
+- Scrapling 正文抓取默认启用其公开的 StealthyFetcher 和 Cloudflare challenge 处理能力；当前切片不自动登录、不自动注册账号。
+- 登录页、需人工完成的验证码以及按域名复用人工会话尚未接入；出现 401/403/429 或账号风控时记录失败并回退。

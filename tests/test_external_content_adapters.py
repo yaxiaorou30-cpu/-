@@ -1,5 +1,8 @@
 import json
+import sys
+import types
 import unittest
+from unittest import mock
 from pathlib import Path
 
 from src.crawler import NewsCrawler as ProductionNewsCrawler
@@ -8,6 +11,12 @@ from src.external_content_adapters import (
     BridgeCommandResult,
     EnrichmentOutcome,
     Newspaper4kArticleAdapter,
+    ScraplingArticleAdapter,
+)
+from src.external_readonly_bridge import (
+    _setup_public_only_routes,
+    _validate_public_url,
+    fetch_scrapling_article,
 )
 from tests.helpers import AllowAllSourcePolicy
 
@@ -45,6 +54,87 @@ def build_available_adapter(adapter_class, response):
 
 
 class ExternalContentAdapterTests(unittest.TestCase):
+    def test_scrapling_bridge_blocks_local_targets(self):
+        for url in (
+            "http://127.0.0.1/private",
+            "http://localhost/private",
+            "http://10.0.0.8/private",
+            "file:///etc/passwd",
+        ):
+            with self.subTest(url=url), self.assertRaises(ValueError):
+                _validate_public_url(url)
+
+    def test_scrapling_bridge_enables_strong_fetcher_options(self):
+        calls = []
+
+        class FakePage:
+            html_content = "<html><article>公开正文</article></html>"
+            url = "https://news.example.com/article/1"
+            status = 200
+
+        class FakeStealthyFetcher:
+            @staticmethod
+            def fetch(url, **kwargs):
+                calls.append((url, kwargs))
+                return FakePage()
+
+        package = types.ModuleType("scrapling")
+        fetchers = types.ModuleType("scrapling.fetchers")
+        fetchers.StealthyFetcher = FakeStealthyFetcher
+        with mock.patch.dict(
+            sys.modules,
+            {"scrapling": package, "scrapling.fetchers": fetchers},
+        ):
+            result = fetch_scrapling_article({
+                "url": "https://news.example.com/article/1",
+                "timeout_ms": 20_000,
+                "use_system_proxy": False,
+            })
+
+        self.assertEqual(result["fetcher"], "stealthy")
+        self.assertEqual(result["status"], 200)
+        self.assertTrue(calls[0][1]["solve_cloudflare"])
+        self.assertTrue(calls[0][1]["network_idle"])
+        self.assertTrue(calls[0][1]["block_ads"])
+        self.assertFalse(calls[0][1]["google_search"])
+        self.assertIs(calls[0][1]["page_setup"], _setup_public_only_routes)
+
+    def test_scrapling_browser_routes_abort_private_targets_and_preserve_existing_handlers(self):
+        handlers = []
+
+        class FakePage:
+            def route(self, pattern, handler):
+                handlers.append((pattern, handler))
+
+        class FakeRequest:
+            def __init__(self, url):
+                self.url = url
+
+        class FakeRoute:
+            def __init__(self, url):
+                self.request = FakeRequest(url)
+                self.action = None
+
+            def abort(self):
+                self.action = "abort"
+
+            def fallback(self):
+                self.action = "fallback"
+
+        _setup_public_only_routes(FakePage())
+        self.assertEqual(handlers[0][0], "**/*")
+
+        private_route = FakeRoute("http://127.0.0.1/admin")
+        public_route = FakeRoute("https://cdn.example.com/app.js")
+        data_route = FakeRoute("data:text/plain,ok")
+        handlers[0][1](private_route)
+        handlers[0][1](public_route)
+        handlers[0][1](data_route)
+
+        self.assertEqual(private_route.action, "abort")
+        self.assertEqual(public_route.action, "fallback")
+        self.assertEqual(data_route.action, "fallback")
+
     def test_newspaper_bridge_receives_downloaded_html(self):
         response = {"ok": True, "data": {"title": "政府公告", "content": "完整正文"}}
         adapter, runner = build_available_adapter(Newspaper4kArticleAdapter, response)
@@ -66,6 +156,41 @@ class ExternalContentAdapterTests(unittest.TestCase):
         self.assertNotIn("secret-bduss", command_text)
         self.assertNotIn("secret-stoken", command_text)
         self.assertEqual(runner.calls[0]["payload"]["bduss"], "secret-bduss")
+
+    def test_scrapling_bridge_uses_isolated_runtime_and_stdin_payload(self):
+        response = {
+            "ok": True,
+            "data": {
+                "html": "<html><article>完整正文</article></html>",
+                "final_url": "https://news.example.com/article/1",
+                "status": 200,
+                "fetcher": "stealthy",
+            },
+        }
+        runner = FakeBridgeRunner(response)
+        adapter = ScraplingArticleAdapter(
+            Path("project-root"),
+            bridge_script=Path("fake-bridge.py"),
+            runner=runner,
+        )
+        adapter.is_available = lambda: True
+
+        outcome = adapter.fetch(
+            "https://news.example.com/article/1",
+            use_system_proxy=False,
+            timeout=45,
+        )
+
+        self.assertEqual(outcome.data["fetcher"], "stealthy")
+        self.assertEqual(runner.calls[0]["command"][-1], "scrapling_fetch")
+        self.assertNotIn("https://news.example.com", " ".join(runner.calls[0]["command"]))
+        self.assertEqual(runner.calls[0]["payload"]["url"], "https://news.example.com/article/1")
+        self.assertEqual(runner.calls[0]["payload"]["timeout_ms"], 45_000)
+        self.assertEqual(runner.calls[0]["timeout"], 60)
+        self.assertEqual(
+            adapter.python_path,
+            Path("project-root") / ".scrapling-venv" / "Scripts" / "python.exe",
+        )
 
 class FakeNewspaperAdapter:
     adapter_name = "newspaper4k"
@@ -97,19 +222,96 @@ class FakeTiebaAdapter:
         return self.outcome
 
 
+class FakeScraplingAdapter:
+    adapter_name = "scrapling"
+
+    def __init__(self, outcome=None):
+        self.outcome = outcome or EnrichmentOutcome("scrapling", True)
+        self.calls = []
+
+    def is_available(self):
+        return True
+
+    def fetch(self, **kwargs):
+        self.calls.append(kwargs)
+        return self.outcome
+
+
 class FakeContentAdapters:
-    def __init__(self, newspaper_outcome=None, tieba_outcome=None):
+    def __init__(self, newspaper_outcome=None, tieba_outcome=None, scrapling_outcome=None):
         self.newspaper = FakeNewspaperAdapter(newspaper_outcome or EnrichmentOutcome("newspaper4k", True))
         self.tieba = FakeTiebaAdapter(tieba_outcome or EnrichmentOutcome("aiotieba", True))
+        self.scrapling = FakeScraplingAdapter(scrapling_outcome)
 
     def status(self):
         return [
             {"adapter_name": "newspaper4k", "available": True},
             {"adapter_name": "aiotieba", "available": True},
+            {"adapter_name": "scrapling", "available": True},
         ]
 
 
 class CrawlerContentEnrichmentTests(unittest.TestCase):
+    def test_scrapling_stealth_is_default_article_detail_fetcher(self):
+        outcome = EnrichmentOutcome(
+            adapter_name="scrapling",
+            available=True,
+            attempted=True,
+            data={
+                "html": "<html><head><title>完整新闻</title></head><body><article><p>"
+                        + ("Scrapling 渲染后的完整公开新闻正文。" * 20)
+                        + "</p></article></body></html>",
+                "final_url": "https://news.example.com/article/1",
+                "status": 200,
+                "fetcher": "stealthy",
+            },
+        )
+        adapters = FakeContentAdapters(scrapling_outcome=outcome)
+        crawler = NewsCrawler(external_content_adapters=adapters)
+        crawler._request_html = lambda *args, **kwargs: self.fail("ordinary fetch must be fallback only")
+        record = {
+            "title": "短标题",
+            "content": "RSS 摘要",
+            "url": "https://news.example.com/article/1",
+            "platform": "Bing 新闻",
+            "source_group": "public_news",
+        }
+
+        crawler._enrich_with_article_content(record)
+
+        self.assertIn("Scrapling 渲染后的完整公开新闻正文", record["content"])
+        self.assertEqual(record["detail_source"], "scrapling_stealth")
+        self.assertTrue(record["detail_enriched"])
+        self.assertEqual(adapters.scrapling.calls[0]["url"], record["url"])
+
+    def test_scrapling_failure_falls_back_to_registered_ordinary_fetch(self):
+        outcome = EnrichmentOutcome(
+            adapter_name="scrapling",
+            available=True,
+            attempted=True,
+            error="browser unavailable",
+        )
+        adapters = FakeContentAdapters(scrapling_outcome=outcome)
+        crawler = NewsCrawler(external_content_adapters=adapters)
+        detail_html = "<html><body><article><p>" + ("普通请求回退正文。" * 20) + "</p></article></body></html>"
+        crawler._request_html = lambda *args, **kwargs: (
+            detail_html,
+            "https://news.example.com/article/2",
+            None,
+        )
+        record = {
+            "title": "新闻",
+            "content": "短摘要",
+            "url": "https://news.example.com/article/2",
+            "platform": "Bing 新闻",
+            "source_group": "public_news",
+        }
+
+        crawler._enrich_with_article_content(record)
+
+        self.assertIn("普通请求回退正文", record["content"])
+        self.assertEqual(len(adapters.scrapling.calls), 1)
+
     def test_tieba_prefers_browser_detail_over_aiotieba(self):
         adapters = FakeContentAdapters()
         crawler = NewsCrawler(external_content_adapters=adapters)

@@ -2881,8 +2881,9 @@ class NewsCrawler:
                     self._enrich_with_xiaohongshu_detail_content(record)
                     if not self._is_valid_social_record_url(record, platform, source_group):
                         record["url"] = initial_url
-                should_enrich_article = source_group != "public_news" and (
-                    len(record.get("content", "")) < 80
+                should_enrich_article = (
+                    source_group == "public_news"
+                    or len(record.get("content", "")) < 80
                     or channel == "官方公开网页"
                 )
                 if (
@@ -2894,7 +2895,11 @@ class NewsCrawler:
                         self._enrich_with_browser_article_content(record, platform)
                         if not self._is_valid_social_record_url(record, platform, source_group):
                             record["url"] = initial_url
-                    if len(record.get("content", "")) < 80 or channel == "官方公开网页":
+                    if (
+                        source_group == "public_news"
+                        or len(record.get("content", "")) < 80
+                        or channel == "官方公开网页"
+                    ):
                         self._enrich_with_article_content(record)
                         if not self._is_valid_social_record_url(record, platform, source_group):
                             record["url"] = initial_url
@@ -3857,10 +3862,33 @@ class NewsCrawler:
         if any(domain in urlparse(url).netloc for domain in ["baidu.com", "sogou.com"]):
             return
 
+        scrapling = getattr(self.external_content_adapters, "scrapling", None)
+        if scrapling and scrapling.is_available():
+            access_decision = self.source_policy.check(url, "article-detail")
+            if access_decision.allowed:
+                outcome = scrapling.fetch(
+                    url=url,
+                    use_system_proxy=self.use_system_proxy,
+                    timeout=45,
+                )
+                rendered_html = str(outcome.data.get("html") or "")
+                rendered_url = str(outcome.data.get("final_url") or url)
+                if rendered_html:
+                    final_decision = self.source_policy.check(rendered_url, "article-detail")
+                    if final_decision.allowed:
+                        detail = self._extract_article_content(rendered_html, rendered_url)
+                        detail["detail_source"] = "scrapling_stealth"
+                        self._apply_article_detail(record, detail, rendered_url)
+                        return
+
         html_text, final_url, error = self._request_html(url, "article-detail")
         if error:
             return
         detail = self._extract_article_content(html_text, final_url or url)
+        self._apply_article_detail(record, detail, final_url or url)
+
+    def _apply_article_detail(self, record: Dict, detail: Dict, final_url: str) -> None:
+        original_content_length = len(record.get("content", "") or "")
         if detail.get("content") and len(detail["content"]) > len(record.get("content", "")):
             record["content"] = detail["content"][:2000]
         if detail.get("title") and len(record.get("title", "")) < 12:
@@ -3877,7 +3905,7 @@ class NewsCrawler:
                 record["time_basis"] = time_basis
         if final_url:
             record["url"] = self._normalize_url(final_url, "")
-        if detail.get("detail_source"):
+        if detail.get("detail_source") and len(record.get("content", "") or "") > original_content_length:
             record["detail_enriched"] = True
             record["detail_source"] = detail["detail_source"]
 
@@ -4121,7 +4149,7 @@ class NewsCrawler:
         )
         external_enrichment_record_count = sum(
             1 for item in data
-            if item.get("detail_source") in {"aiotieba", "newspaper4k"}
+            if item.get("detail_source") in {"aiotieba", "newspaper4k", "scrapling_stealth"}
         )
 
         real_ratio = round(real_count / total, 2) if total else 0

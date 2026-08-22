@@ -8,11 +8,13 @@
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import json
 import os
 import sys
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import urlparse
 
 
 def _read_payload() -> dict:
@@ -195,6 +197,85 @@ def fetch_tieba_thread(payload: dict) -> dict:
     return asyncio.run(_fetch_tieba_thread(payload))
 
 
+def _validate_public_url(value: str) -> str:
+    url = _safe_text(value)
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ValueError("only HTTP/HTTPS article URLs are allowed")
+    if parsed.username or parsed.password:
+        raise ValueError("article URL must not contain credentials")
+    hostname = parsed.hostname.strip("[]").casefold()
+    if hostname in {"localhost", "localhost.localdomain"} or hostname.endswith(".localhost"):
+        raise ValueError("local article targets are not allowed")
+    try:
+        address = ipaddress.ip_address(hostname)
+    except ValueError:
+        address = None
+    if address and not address.is_global:
+        raise ValueError("private or non-global article targets are not allowed")
+    return url
+
+
+def _setup_public_only_routes(page) -> None:
+    """Keep browser redirects and subrequests away from literal local/private targets."""
+
+    def handle_route(route) -> None:
+        request_url = _safe_text(getattr(getattr(route, "request", None), "url", ""))
+        parsed = urlparse(request_url)
+        if parsed.scheme in {"http", "https"}:
+            try:
+                _validate_public_url(request_url)
+            except ValueError:
+                route.abort()
+                return
+        # Scrapling already has an earlier route for resource blocking. Falling
+        # back keeps that handler active; continue_() would bypass it.
+        route.fallback()
+
+    page.route("**/*", handle_route)
+
+
+def fetch_scrapling_article(payload: dict) -> dict:
+    from scrapling.fetchers import StealthyFetcher
+
+    url = _validate_public_url(payload.get("url"))
+    timeout_ms = min(max(int(payload.get("timeout_ms") or 45_000), 10_000), 60_000)
+    runtime_root = Path.cwd() / ".scrapling-runtime"
+    browser_root = runtime_root / "playwright"
+    runtime_root.mkdir(parents=True, exist_ok=True)
+    os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", str(browser_root.resolve()))
+
+    fetch_kwargs = {
+        "headless": True,
+        "network_idle": True,
+        "timeout": timeout_ms,
+        "disable_resources": True,
+        "block_ads": True,
+        "solve_cloudflare": True,
+        "google_search": False,
+        "load_dom": True,
+        "page_setup": _setup_public_only_routes,
+    }
+    if bool(payload.get("use_system_proxy", False)):
+        proxy = os.environ.get("HTTPS_PROXY") or os.environ.get("HTTP_PROXY")
+        if proxy:
+            fetch_kwargs["proxy"] = proxy
+
+    page = StealthyFetcher.fetch(url, **fetch_kwargs)
+    html = _safe_text(getattr(page, "html_content", ""))
+    if not html:
+        raise RuntimeError("Scrapling returned an empty rendered page")
+    if len(html.encode("utf-8")) > 5_000_000:
+        raise RuntimeError("Scrapling rendered page exceeds the 5 MB bridge limit")
+    final_url = _validate_public_url(getattr(page, "url", "") or url)
+    return {
+        "html": html,
+        "final_url": final_url,
+        "status": int(getattr(page, "status", 0) or 0),
+        "fetcher": "stealthy",
+    }
+
+
 def search_weibo(payload: dict) -> dict:
     """Read Weibo search results through the MIT-licensed crawl4weibo client."""
     from crawl4weibo import RateLimitConfig, WeiboClient
@@ -280,6 +361,8 @@ def main() -> int:
             data = extract_newspaper(payload)
         elif action == "tieba_thread":
             data = fetch_tieba_thread(payload)
+        elif action == "scrapling_fetch":
+            data = fetch_scrapling_article(payload)
         elif action == "crawl4weibo_search":
             data = search_weibo(payload)
         elif action == "bilibili_search":

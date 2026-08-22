@@ -143,24 +143,62 @@ class AiotiebaThreadAdapter(IsolatedReadOnlyAdapter):
         }, timeout=timeout)
 
 
+class ScraplingArticleAdapter(IsolatedReadOnlyAdapter):
+    adapter_name = "scrapling"
+    action = "scrapling_fetch"
+
+    @property
+    def python_path(self) -> Path:
+        if os.name == "nt":
+            return self.repo_dir / ".scrapling-venv" / "Scripts" / "python.exe"
+        return self.repo_dir / ".scrapling-venv" / "bin" / "python"
+
+    def fetch(
+        self,
+        url: str,
+        use_system_proxy: bool = False,
+        timeout: int = 45,
+    ) -> EnrichmentOutcome:
+        timeout = min(max(int(timeout), 10), 90)
+        return self.execute({
+            "url": url,
+            "use_system_proxy": bool(use_system_proxy),
+            "timeout_ms": min(timeout * 1000, 60_000),
+        }, timeout=min(timeout + 15, 105))
+
+
 class ExternalContentAdapters:
-    def __init__(self, newspaper: Newspaper4kArticleAdapter, tieba: AiotiebaThreadAdapter):
+    def __init__(
+        self,
+        newspaper: Newspaper4kArticleAdapter,
+        tieba: AiotiebaThreadAdapter,
+        scrapling: Optional[ScraplingArticleAdapter] = None,
+    ):
         self.newspaper = newspaper
         self.tieba = tieba
+        self.scrapling = scrapling
 
     def status(self):
-        return [
+        status = [
             {"adapter_name": self.newspaper.adapter_name, "available": self.newspaper.is_available()},
             {"adapter_name": self.tieba.adapter_name, "available": self.tieba.is_available()},
         ]
+        if self.scrapling:
+            status.append({
+                "adapter_name": self.scrapling.adapter_name,
+                "available": self.scrapling.is_available(),
+            })
+        return status
 
 
 def create_default_external_content_adapters(candidates_root: Optional[Path] = None) -> ExternalContentAdapters:
-    root = Path(candidates_root) if candidates_root else Path(__file__).resolve().parents[1] / "opensource_candidates"
+    project_root = Path(__file__).resolve().parents[1]
+    root = Path(candidates_root) if candidates_root else project_root / "opensource_candidates"
     bridge = Path(__file__).with_name("external_readonly_bridge.py")
     return ExternalContentAdapters(
         newspaper=Newspaper4kArticleAdapter(root / "newspaper4k", bridge_script=bridge),
         tieba=AiotiebaThreadAdapter(root / "aiotieba", bridge_script=bridge),
+        scrapling=ScraplingArticleAdapter(project_root, bridge_script=bridge),
     )
 
 
