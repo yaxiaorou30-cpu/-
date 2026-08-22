@@ -132,6 +132,25 @@ class ReportGenerationTests(unittest.TestCase):
         self.assertEqual(samples[0]["platform"], "微博")
         self.assertEqual(timeline[0]["display_time"], "2026-07-02")
 
+    def test_report_quality_counts_public_news_separately(self):
+        data = [{
+            "title": "公开新闻线索",
+            "content": "可追溯的公开新闻摘要。",
+            "url": "https://news.example.com/public/1",
+            "pub_time": "2026-08-22T12:00:00",
+            "time_basis": "published_time",
+            "source": "示例媒体",
+            "platform": "Bing 新闻",
+            "source_type": "media",
+            "source_group": "public_news",
+            "data_type": "real",
+        }]
+
+        quality = build_data_quality_summary(data, {})
+
+        self.assertEqual(quality["public_news_count"], 1)
+        self.assertEqual(quality["statistics"]["public_news_count"], 1)
+
     def test_report_preview_keeps_full_evidence_catalog_beyond_eight_key_samples(self):
         Path("data").mkdir(exist_ok=True)
         tmp = self._temporary_data_dir("_test_evidence_catalog_")

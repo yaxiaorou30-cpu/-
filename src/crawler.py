@@ -227,7 +227,7 @@ SOCIAL_ENHANCEMENT_PLATFORMS = {
     "今日头条",
     "微信公众平台",
 }
-SOURCE_STRATEGIES = ("stable_first", "stable", "social", "hybrid")
+SOURCE_STRATEGIES = ("all", "stable", "public_news", "social", "stable_first", "hybrid")
 
 
 class AntiCrawlStrategy:
@@ -430,7 +430,7 @@ class NewsCrawler:
         region: str = None,
         time_range: str = "近一周",
         collect_level: str = "标准采集",
-        source_strategy: str = "stable_first",
+        source_strategy: str = "all",
         min_real_results: int = None,
         progress_callback: Optional[Callable[[Dict], None]] = None,
         source_acceptance: bool = False,
@@ -447,7 +447,7 @@ class NewsCrawler:
             region: 地区（省份+城市）
             time_range: 时间范围
             collect_level: 采集阈值等级
-            source_strategy: stable_first / stable / social / hybrid
+            source_strategy: all / stable / public_news / social；旧值 stable_first、hybrid 等同 all
             min_real_results: 最低真实结果数，默认取采集等级的 min_content
             source_acceptance: 仅验证稳定源连通性、解析和最小字段，不按关键词/时间过滤
         """
@@ -472,6 +472,7 @@ class NewsCrawler:
         logger.info(
             f"采集等级: {collect_level}, 最大结果: {target_count}, "
             f"数据源策略: {source_strategy}, 稳定源={stable_source_names}, "
+            f"公开新闻={PUBLIC_NEWS_SOURCE['name']}, "
             f"社交增强={social_platforms}"
         )
         self._emit_progress(progress_callback, {
@@ -480,6 +481,7 @@ class NewsCrawler:
             "keywords": keywords,
             "source_strategy": source_strategy,
             "stable_sources": stable_source_names,
+            "public_news_sources": [PUBLIC_NEWS_SOURCE["name"]],
             "social_platforms": social_platforms,
         })
 
@@ -488,10 +490,11 @@ class NewsCrawler:
             logger.warning(message)
             failures.append({"channel": "dependency", "url": "", "error": message})
 
+        group_results = {"stable": [], "public_news": [], "social": []}
         if CRAWLER_AVAILABLE:
             try:
-                for keyword in keywords:
-                    if source_strategy in ("stable_first", "stable"):
+                if source_strategy in ("all", "stable"):
+                    for keyword in keywords:
                         stable_requests_all = self._build_stable_source_requests(
                             keyword=keyword,
                             province=None if self._source_acceptance_mode else province,
@@ -501,70 +504,90 @@ class NewsCrawler:
                         stable_requests = stable_requests_all
                         if not level_config.get("multi_channel", True):
                             stable_requests = stable_requests[:3]
-                        collected, source_failures = self._collect_from_source_requests(
+                        collected, source_failures = self._collect_source_requests_safely(
                             source_requests=stable_requests,
                             keyword=keyword,
                             region=region or "全国",
                             collect_level=collect_level,
                             start_time=None if self._source_acceptance_mode else start_time,
                             end_time=None if self._source_acceptance_mode else end_time,
-                            remaining=max(target_count - len(results), 0),
+                            remaining=max(target_count - len(group_results["stable"]), 0),
                             progress_callback=progress_callback,
                         )
-                        results = self._deduplicate_results(results + collected)
+                        group_results["stable"] = self._deduplicate_results(
+                            group_results["stable"] + collected
+                        )
                         failures.extend(source_failures)
                         logger.info(f"政府官网关键词 '{keyword}' 新增 {len(collected)} 条")
 
-                        stable_real_count = self._count_real_by_group(results, "stable")
+                        stable_real_count = self._count_real_by_group(
+                            group_results["stable"], "stable"
+                        )
                         if (
-                            source_strategy == "stable_first"
-                            and not level_config.get("multi_channel", True)
+                            not level_config.get("multi_channel", True)
                             and stable_real_count < min_real
                             and len(stable_requests_all) > len(stable_requests)
-                            and len(results) < target_count
+                            and len(group_results["stable"]) < target_count
                         ):
                             extra_requests = stable_requests_all[len(stable_requests):]
-                            collected, source_failures = self._collect_from_source_requests(
+                            collected, source_failures = self._collect_source_requests_safely(
                                 source_requests=extra_requests,
                                 keyword=keyword,
                                 region=region or "全国",
                                 collect_level=collect_level,
                                 start_time=None if self._source_acceptance_mode else start_time,
                                 end_time=None if self._source_acceptance_mode else end_time,
-                                remaining=max(target_count - len(results), 0),
+                                remaining=max(
+                                    target_count - len(group_results["stable"]), 0
+                                ),
                                 progress_callback=progress_callback,
                             )
-                            results = self._deduplicate_results(results + collected)
+                            group_results["stable"] = self._deduplicate_results(
+                                group_results["stable"] + collected
+                            )
                             failures.extend(source_failures)
                             logger.info(f"政府官网补充采集关键词 '{keyword}' 新增 {len(collected)} 条")
-                        if len(results) >= target_count:
+                        if len(group_results["stable"]) >= target_count:
                             break
 
-                    if len(results) >= target_count:
-                        break
-
-                stable_real_count = self._count_real_by_group(results, "stable")
-                should_run_social = (
-                    source_strategy == "social"
-                    or (
-                        source_strategy == "stable_first"
-                        and stable_real_count >= min_real
-                        and len(results) < target_count
-                    )
-                )
-
-                if should_run_social:
+                if source_strategy in ("all", "public_news"):
                     for keyword in keywords:
-                        for platform in social_platforms:
+                        public_news_requests = self._build_public_news_source_requests(
+                            keyword=keyword,
+                            province=province,
+                            city=city,
+                        )
+                        collected, source_failures = self._collect_source_requests_safely(
+                            source_requests=public_news_requests,
+                            keyword=keyword,
+                            region=region or "全国",
+                            collect_level=collect_level,
+                            start_time=start_time,
+                            end_time=end_time,
+                            remaining=max(
+                                target_count - len(group_results["public_news"]), 0
+                            ),
+                            progress_callback=progress_callback,
+                        )
+                        group_results["public_news"] = self._deduplicate_results(
+                            group_results["public_news"] + collected
+                        )
+                        failures.extend(source_failures)
+                        logger.info(f"公开新闻关键词 '{keyword}' 新增 {len(collected)} 条")
+                        if len(group_results["public_news"]) >= target_count:
+                            break
+
+                if source_strategy in ("all", "social"):
+                    social_results_by_platform = {platform: [] for platform in social_platforms}
+                    for platform in social_platforms:
+                        for keyword in keywords:
                             social_requests = self._build_social_source_requests(platform, keyword, province, city)
                             if not level_config.get("multi_channel", True):
                                 social_requests = social_requests[:1]
-                            remaining = (
-                                target_count
-                                if source_strategy == "social"
-                                else max(target_count - len(results), 0)
+                            remaining = max(
+                                target_count - len(social_results_by_platform[platform]), 0
                             )
-                            collected, source_failures = self._collect_from_source_requests(
+                            collected, source_failures = self._collect_source_requests_safely(
                                 source_requests=social_requests,
                                 keyword=keyword,
                                 region=region or "全国",
@@ -574,18 +597,30 @@ class NewsCrawler:
                                 remaining=remaining,
                                 progress_callback=progress_callback,
                             )
-                            results = self._deduplicate_results(results + collected)
+                            social_results_by_platform[platform] = self._deduplicate_results(
+                                social_results_by_platform[platform] + collected
+                            )
                             failures.extend(source_failures)
                             logger.info(f"社交增强平台 '{platform}' 关键词 '{keyword}' 新增 {len(collected)} 条")
-                            if source_strategy != "social" and len(results) >= target_count:
+                            if len(social_results_by_platform[platform]) >= target_count:
                                 break
-                        if source_strategy != "social" and len(results) >= target_count:
-                            break
-                elif source_strategy == "stable_first" and stable_real_count < min_real:
-                    logger.warning(f"政府官网真实数据不足，暂不进入社交平台采集: {stable_real_count}/{min_real}")
+                    social_combined = []
+                    for platform in social_platforms:
+                        social_combined.extend(social_results_by_platform[platform])
+                    group_results["social"] = self._limit_results_with_platform_coverage(
+                        records=self._deduplicate_results(social_combined),
+                        max_results=target_count,
+                        platforms=social_platforms,
+                    )
+
             except Exception as e:
                 logger.warning(f"真实采集异常: {e}")
                 failures.append({"channel": "crawler", "url": "", "error": str(e)})
+            results = self._merge_source_group_results(
+                group_results=group_results,
+                active_groups=self._active_source_groups(source_strategy),
+                max_results=target_count,
+            )
 
         self.anti_crawl.reset_counter()
 
@@ -2382,19 +2417,60 @@ class NewsCrawler:
         return None
 
     def _normalize_source_strategy(self, source_strategy: str) -> str:
-        strategy = (source_strategy or "stable_first").strip().lower()
+        strategy = (source_strategy or "all").strip().lower()
         aliases = {
-            "hybrid": "stable_first",
-            "stable-first": "stable_first",
-            "stablefirst": "stable_first",
-            "public_first": "stable_first",
+            "hybrid": "all",
+            "stable_first": "all",
+            "stable-first": "all",
+            "stablefirst": "all",
+            "public_first": "all",
             "public": "stable",
         }
         strategy = aliases.get(strategy, strategy)
-        if strategy not in {"stable_first", "stable", "social"}:
-            logger.warning(f"未知数据源策略 {source_strategy!r}，已回退为 stable_first")
-            return "stable_first"
+        if strategy not in {"all", "stable", "public_news", "social"}:
+            logger.warning(f"未知数据源策略 {source_strategy!r}，已回退为 all")
+            return "all"
         return strategy
+
+    @staticmethod
+    def _active_source_groups(source_strategy: str) -> List[str]:
+        if source_strategy == "all":
+            return ["stable", "public_news", "social"]
+        return [source_strategy]
+
+    def _merge_source_group_results(
+        self,
+        group_results: Dict[str, List[Dict]],
+        active_groups: List[str],
+        max_results: int,
+    ) -> List[Dict]:
+        """独立采集后按来源组轮转合并，避免某一组先填满总结果。"""
+        combined = []
+        for group in active_groups:
+            combined.extend(group_results.get(group, []))
+        deduplicated = self._deduplicate_results(combined)
+        buckets = {
+            group: [item for item in deduplicated if item.get("source_group") == group]
+            for group in active_groups
+        }
+        other = [
+            item for item in deduplicated
+            if item.get("source_group") not in set(active_groups)
+        ]
+        selected = []
+        while len(selected) < max_results:
+            added = False
+            for group in active_groups:
+                if buckets[group]:
+                    selected.append(buckets[group].pop(0))
+                    added = True
+                    if len(selected) >= max_results:
+                        break
+            if not added:
+                break
+        if len(selected) < max_results:
+            selected.extend(other[: max_results - len(selected)])
+        return selected
 
     def _select_stable_source_names(self, stable_sources: Optional[List[str]]) -> List[str]:
         registry = sorted(
@@ -2935,6 +3011,23 @@ class NewsCrawler:
             1 for record in records
             if record.get("data_type") == "real" and record.get("source_group") == source_group
         )
+
+    def _collect_source_requests_safely(self, **kwargs) -> Tuple[List[Dict], List[Dict]]:
+        """隔离单个来源组的意外异常，确保其他独立来源组仍能运行。"""
+        source_requests = kwargs.get("source_requests") or []
+        request = source_requests[0] if source_requests else {}
+        try:
+            return self._collect_from_source_requests(**kwargs)
+        except Exception as exc:
+            channel = request.get("channel") or request.get("platform") or "unknown"
+            logger.warning(f"来源组 '{channel}' 采集异常: {exc}")
+            return [], [{
+                "channel": channel,
+                "platform": request.get("platform") or "",
+                "source_group": request.get("source_group") or "unknown",
+                "url": request.get("url") or "",
+                "error": f"source group collection failed: {exc}",
+            }]
 
     def _build_multi_channel_urls(self, platform: str, keyword: str,
                                    province: Optional[str], city: Optional[str],
@@ -3937,6 +4030,10 @@ class NewsCrawler:
             1 for item in data
             if item.get("data_type") == "real" and item.get("source_group") == "stable"
         )
+        public_news_real_count = sum(
+            1 for item in data
+            if item.get("data_type") == "real" and item.get("source_group") == "public_news"
+        )
         social_real_count = sum(
             1 for item in data
             if item.get("data_type") == "real" and item.get("source_group") == "social"
@@ -4047,12 +4144,14 @@ class NewsCrawler:
             "duration_seconds": round((datetime.now() - started_at).total_seconds(), 2),
             "keywords": keywords,
             "stable_sources": stable_sources or [],
+            "public_news_sources": [PUBLIC_NEWS_SOURCE["name"]],
             "social_platforms": platforms,
             "platforms": platforms,
             "region": region,
             "time_range": time_range,
             "collect_level": collect_level,
             "source_strategy": source_strategy,
+            "active_source_groups": self._active_source_groups(source_strategy),
             "source_acceptance_mode": bool(source_acceptance),
             "acceptance_scope": (
                 "source_connectivity_and_parse" if source_acceptance else ""
@@ -4065,6 +4164,7 @@ class NewsCrawler:
                 "total": total,
                 "real_count": real_count,
                 "stable_real_count": stable_real_count,
+                "public_news_real_count": public_news_real_count,
                 "social_real_count": social_real_count,
                 "mock_count": mock_count,
                 "real_ratio": real_ratio,
@@ -4327,7 +4427,7 @@ class NewsCrawler:
         stable_sources: List[str] = None,
         time_range: str = "近一周",
         collect_level: str = "标准采集",
-        source_strategy: str = "stable_first",
+        source_strategy: str = "all",
         min_real_results: int = None,
     ) -> List[Dict]:
         """针对特定视频进行多平台舆情采集"""
@@ -4599,7 +4699,7 @@ def crawl_and_save(
     time_range: str = "近一周",
     collect_level: str = "标准采集",
     accounts: Dict[str, Dict] = None,
-    source_strategy: str = "stable_first",
+    source_strategy: str = "all",
     min_real_results: int = None,
     meta_path: str = None,
     progress_callback: Optional[Callable[[Dict], None]] = None,
@@ -4670,7 +4770,7 @@ def crawl_video_and_save(
     time_range: str = "近一周",
     collect_level: str = "标准采集",
     accounts: Dict[str, Dict] = None,
-    source_strategy: str = "stable_first",
+    source_strategy: str = "all",
     min_real_results: int = None,
     meta_path: str = None,
     use_external_social_adapters: bool = True,

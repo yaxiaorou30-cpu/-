@@ -75,6 +75,7 @@ const els = {
   resultBody: document.getElementById("resultBody"),
   realCount: document.getElementById("realCount"),
   stableCount: document.getElementById("stableCount"),
+  publicNewsCount: document.getElementById("publicNewsCount"),
   socialCount: document.getElementById("socialCount"),
   qualityStatus: document.getElementById("qualityStatus"),
   qualityChecklist: document.getElementById("qualityChecklist"),
@@ -192,8 +193,11 @@ const TASK_STATUS_COPY = {
 };
 
 const SOURCE_STRATEGY_COPY = {
-  stable_first: "先查政府官网",
+  all: "全部独立采集",
+  stable_first: "全部独立采集（旧任务）",
+  hybrid: "全部独立采集（旧任务）",
   stable: "只查政府官网",
+  public_news: "只查公开新闻",
   social: "只查社交平台",
 };
 
@@ -616,7 +620,13 @@ function updateSourceSummary() {
   if (!els.selectedSourceSummary || !els.stableSources || !els.socialPlatforms) return;
   const stable = checkedValues(els.stableSources);
   const social = checkedValues(els.socialPlatforms);
-  els.selectedSourceSummary.textContent = `政府官网 ${stable.length} 个 · 社交平台 ${social.length} 个`;
+  const publicNews = state.options?.public_news_sources?.length || 0;
+  const strategy = selectedStrategy();
+  const parts = [];
+  if (strategy === "all" || strategy === "stable") parts.push(`政府官网 ${stable.length} 个`);
+  if (strategy === "all" || strategy === "public_news") parts.push(`公开新闻 ${publicNews} 个`);
+  if (strategy === "all" || strategy === "social") parts.push(`社交平台 ${social.length} 个`);
+  els.selectedSourceSummary.textContent = parts.join(" · ") || "尚未选择采集来源";
 }
 
 function checkedValues(container) {
@@ -646,7 +656,7 @@ function accountFromCard(card) {
 
 function selectedStrategy() {
   const input = document.querySelector("input[name='sourceStrategy']:checked");
-  return input ? input.value : "stable_first";
+  return input ? input.value : "all";
 }
 
 function toDateInputValue(date) {
@@ -740,6 +750,7 @@ function updateMetrics(latest) {
 
   els.realCount.textContent = summary.real_count ?? 0;
   els.stableCount.textContent = summary.stable_real_count ?? 0;
+  els.publicNewsCount.textContent = summary.public_news_real_count ?? 0;
   els.socialCount.textContent = summary.social_real_count ?? 0;
   const assessment = quality.status_code ? quality : (meta.quality_assessment || {});
   els.qualityStatus.textContent = assessment.status_label || "未检查";
@@ -963,7 +974,7 @@ function showHistoryDetail(item) {
   appendHistoryDetailRow(
     els.historyDetailContent,
     "来源结果",
-    `政府官网 ${summary.stable_real_count || 0} 条 · 社交平台 ${summary.social_real_count || 0} 条`,
+    `政府官网 ${summary.stable_real_count || 0} 条 · 公开新闻 ${summary.public_news_real_count || 0} 条 · 社交平台 ${summary.social_real_count || 0} 条`,
   );
   appendHistoryDetailRow(
     els.historyDetailContent,
@@ -1212,8 +1223,11 @@ function reuseHistoryConditions() {
   updateCustomDateRange();
 
   const strategies = [...document.querySelectorAll("input[name='sourceStrategy']")];
-  const strategy = strategies.find((input) => input.value === payload.source_strategy)
-    || strategies.find((input) => input.value === "stable_first");
+  const requestedStrategy = ["stable_first", "hybrid"].includes(payload.source_strategy)
+    ? "all"
+    : payload.source_strategy;
+  const strategy = strategies.find((input) => input.value === requestedStrategy)
+    || strategies.find((input) => input.value === "all");
   if (strategy) strategy.checked = true;
   const missingStable = applyHistoryChecks(els.stableSources, payload.stable_sources || []);
   const missingSocial = applyHistoryChecks(els.socialPlatforms, payload.social_platforms || []);
@@ -2676,7 +2690,13 @@ function monitorTitle(plan = {}) {
 
 function monitorMetaText(plan = {}) {
   const payload = plan.payload || {};
-  const sourceCount = (payload.stable_sources || []).length + (payload.social_platforms || []).length;
+  const strategy = ["stable_first", "hybrid"].includes(payload.source_strategy)
+    ? "all"
+    : (payload.source_strategy || "all");
+  const sourceCount =
+    ((strategy === "all" || strategy === "stable") ? (payload.stable_sources || []).length : 0)
+    + ((strategy === "all" || strategy === "public_news") ? 1 : 0)
+    + ((strategy === "all" || strategy === "social") ? (payload.social_platforms || []).length : 0);
   return `每 ${plan.interval_minutes || "-"} 分钟 · ${sourceCount} 个来源 · 累计新增 ${plan.total_new || 0} 条`;
 }
 
@@ -3141,6 +3161,10 @@ document.querySelectorAll("[data-select]").forEach((button) => {
     const groupName = button.dataset.select === "stable" ? "政府官网" : "社交平台";
     addSourceLog(`${groupName}已${allChecked ? "全部取消" : "全部选择"}`, "info");
   });
+});
+
+document.querySelectorAll("input[name='sourceStrategy']").forEach((input) => {
+  input.addEventListener("change", updateSourceSummary);
 });
 
 document.querySelectorAll("[data-view-target]").forEach((button) => {

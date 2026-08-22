@@ -162,10 +162,17 @@
                   <legend>采集来源</legend>
                   <div class="choice-row">
                     <label class="choice-card">
-                      <input type="radio" name="sourceStrategy" value="stable_first" checked />
+                      <input type="radio" name="sourceStrategy" value="all" checked />
                       <span>
-                        <strong>先查政府官网</strong>
-                        <small>政府官网结果达到基础数量后，再补充已选社交平台。</small>
+                        <strong>全部独立采集</strong>
+                        <small>政府官网、Bing 公开新闻和社交平台各自采集，互不作为前置条件。</small>
+                      </span>
+                    </label>
+                    <label class="choice-card">
+                      <input type="radio" name="sourceStrategy" value="public_news" />
+                      <span>
+                        <strong>只查公开新闻</strong>
+                        <small>仅通过 Bing News RSS 检索公开网页与新闻线索。</small>
                       </span>
                     </label>
                     <label class="choice-card">
@@ -253,6 +260,11 @@
                 <span>政府官网</span>
                 <strong id="stableCount">0</strong>
                 <small>公开发布的信息</small>
+              </div>
+              <div class="metric">
+                <span>公开新闻</span>
+                <strong id="publicNewsCount">0</strong>
+                <small>Bing RSS 原文线索</small>
               </div>
               <div class="metric">
                 <span>社交平台</span>
@@ -444,7 +456,7 @@
               <div>
                 <span class="eyebrow">采集边界</span>
                 <h2>明确来源范围，维护使用者自己的平台账号</h2>
-                <p>政府官网公开信息尽力采集；需要登录的平台由当前使用者提供并维护账号，失效后重新授权。</p>
+                <p>政府官网、Bing 公开新闻和社交平台独立采集；需要登录的平台由当前使用者提供并维护账号。</p>
               </div>
             </div>
 
@@ -459,6 +471,16 @@
                 </div>
                 <p class="section-description">优先接入国家级业务官网和天津本地公安、政府发布、应急信息栏目；仅显示已真实核对的来源。</p>
                 <div class="check-grid" id="stableSources"></div>
+              </section>
+
+              <section class="surface source-selector-panel">
+                <div class="section-heading">
+                  <div>
+                    <span class="section-kicker">S2 / 公开新闻检索</span>
+                    <h3>Bing News RSS</h3>
+                  </div>
+                </div>
+                <p class="section-description">独立检索跨来源公开网页与新闻，保存并去重原始文章链接；当前为尽力采集来源。</p>
               </section>
 
               <section class="surface source-selector-panel">

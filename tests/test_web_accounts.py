@@ -26,7 +26,7 @@ class WebAccountStoreTests(unittest.TestCase):
         self.assertIn('name="sourceStrategy" value="social"', html)
         self.assertNotIn('value="social_first"', html)
         self.assertIn("<h3>政府官方网站</h3>", html)
-        self.assertIn("<strong>先查政府官网</strong>", html)
+        self.assertIn("<strong>全部独立采集</strong>", html)
         summary = web_app.task_payload_summary(
             {
                 "topic": "深圳强降雨交通影响舆情",
@@ -124,6 +124,7 @@ class WebAccountStoreTests(unittest.TestCase):
                 "total": 12,
                 "real_count": 10,
                 "stable_real_count": 4,
+                "public_news_real_count": 2,
                 "social_real_count": 6,
                 "quality_conclusion": "legacy detail",
             },
@@ -152,12 +153,27 @@ class WebAccountStoreTests(unittest.TestCase):
 
         self.assertEqual(safe["payload"]["min_real_results"], 8)
         self.assertEqual(safe["summary"]["real_count"], 10)
+        self.assertEqual(safe["summary"]["public_news_real_count"], 2)
         self.assertNotIn("quality_conclusion", safe["summary"])
         serialized = str(safe)
         self.assertNotIn("private-user", serialized)
         self.assertNotIn("private-password", serialized)
         self.assertNotIn("private-cookie", serialized)
         self.assertNotIn("legacy-secret", serialized)
+
+    def test_options_and_dashboard_expose_public_news_separately(self):
+        handler = object.__new__(web_app.WebUIHandler)
+        with patch.object(web_app, "build_history_catalog", return_value={"history": []}), \
+             patch.object(web_app, "build_saved_account_statuses", return_value={}), \
+             patch.object(web_app, "deepseek_configuration_status", return_value={}):
+            options = handler.build_options()
+
+        self.assertEqual(options["public_news_sources"], ["Bing News RSS"])
+        html = (web_app.WEB_DIR / "index.html").read_text(encoding="utf-8")
+        javascript = (web_app.WEB_DIR / "static" / "app.js").read_text(encoding="utf-8")
+        self.assertIn('id="publicNewsCount"', html)
+        self.assertIn("公开新闻", html)
+        self.assertIn("summary.public_news_real_count", javascript)
 
     def test_task_payload_summary_never_copies_account_credentials(self):
         summary = web_app.task_payload_summary(

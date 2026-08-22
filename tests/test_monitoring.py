@@ -203,6 +203,16 @@ class MonitoringTests(unittest.TestCase):
                 15,
             )
 
+        default_plan = manager.create_plan(
+            monitor_payload(
+                source_strategy="all",
+                stable_sources=[],
+                social_platforms=[],
+            ),
+            15,
+        )
+        self.assertEqual(default_plan["payload"]["source_strategy"], "all")
+
     def test_scheduler_runs_new_plan_immediately_and_restores_active_job(self):
         event = threading.Event()
 

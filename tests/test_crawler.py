@@ -1360,6 +1360,171 @@ class CrawlerPolicyTests(unittest.TestCase):
         self.assertEqual(self.crawler.last_meta["summary"]["stable_real_count"], len(data))
         self.assertEqual(self.crawler.last_meta["summary"]["social_real_count"], 0)
 
+    def test_all_strategy_runs_three_source_groups_independently(self):
+        calls = []
+
+        def fake_collect(source_requests, keyword, region, collect_level, start_time, end_time,
+                         remaining, progress_callback=None):
+            source_group = source_requests[0]["source_group"]
+            calls.append(source_group)
+            if source_group == "stable":
+                return [{
+                    "title": "政府官网结果",
+                    "content": "政府官网公开信息。",
+                    "url": "https://gov.example.cn/notices/1",
+                    "platform": "测试政府官网",
+                    "source": "测试政府官网",
+                    "source_group": "stable",
+                    "source_type": "official",
+                    "data_type": "real",
+                    "pub_time": "2026-08-22T13:00:00",
+                }], []
+            if source_group == "social":
+                return [{
+                    "title": "社交平台结果",
+                    "content": "社交平台公开信息。",
+                    "url": "https://weibo.com/1/example",
+                    "platform": "微博",
+                    "source": "测试账号",
+                    "source_group": "social",
+                    "source_type": "public",
+                    "data_type": "real",
+                    "pub_time": "2026-08-22T11:00:00",
+                }], []
+            return [{
+                "title": "公开新闻补充结果",
+                "content": "这是通过公开新闻检索补充的摘要。",
+                "url": "https://news.example.com/public/1",
+                "platform": "Bing 新闻",
+                "source": "示例媒体",
+                "source_group": "public_news",
+                "source_type": "media",
+                "data_type": "real",
+                "pub_time": "2026-08-22T12:00:00",
+            }], []
+
+        self.crawler._collect_from_source_requests = fake_collect
+        data = self.crawler.crawl(
+            ["跨来源检索"],
+            max_results=3,
+            collect_level="最小采集",
+            source_strategy="all",
+            social_platforms=["微博"],
+            min_real_results=1,
+        )
+
+        self.assertEqual(set(calls), {"stable", "public_news", "social"})
+        self.assertEqual(len(data), 3)
+        self.assertEqual(
+            {item["source_group"] for item in data},
+            {"stable", "public_news", "social"},
+        )
+        summary = self.crawler.last_meta["summary"]
+        self.assertEqual(summary["stable_real_count"], 1)
+        self.assertEqual(summary["public_news_real_count"], 1)
+        self.assertEqual(summary["social_real_count"], 1)
+
+    def test_all_strategy_runs_social_when_other_groups_have_no_results(self):
+        calls = []
+
+        def fake_collect(source_requests, keyword, region, collect_level, start_time, end_time,
+                         remaining, progress_callback=None):
+            source_group = source_requests[0]["source_group"]
+            calls.append(source_group)
+            if source_group in {"stable", "public_news"}:
+                return [], []
+            return [{
+                "title": "社交平台补充线索",
+                "content": "社交平台公开内容。",
+                "url": "https://weibo.com/1/example",
+                "platform": "微博",
+                "source": "测试账号",
+                "source_group": "social",
+                "source_type": "public",
+                "data_type": "real",
+                "pub_time": "2026-08-22T10:00:00",
+            }], []
+
+        self.crawler._collect_from_source_requests = fake_collect
+        data = self.crawler.crawl(
+            ["跨来源检索"],
+            max_results=2,
+            collect_level="最小采集",
+            source_strategy="all",
+            social_platforms=["微博"],
+            min_real_results=2,
+        )
+
+        self.assertEqual(set(calls), {"stable", "public_news", "social"})
+        self.assertEqual({item["source_group"] for item in data}, {"social"})
+        summary = self.crawler.last_meta["summary"]
+        self.assertEqual(summary["public_news_real_count"], 0)
+        self.assertEqual(summary["social_real_count"], 1)
+
+    def test_all_strategy_isolates_source_group_failures(self):
+        calls = []
+
+        def fake_collect(source_requests, **kwargs):
+            source_group = source_requests[0]["source_group"]
+            calls.append(source_group)
+            if source_group == "stable":
+                raise RuntimeError("government source failure")
+            return [{
+                "title": f"{source_group} 仍可采集",
+                "content": "另一来源组不受影响。",
+                "url": f"https://example.com/{source_group}",
+                "platform": "微博" if source_group == "social" else "Bing 新闻",
+                "source": "测试来源",
+                "source_group": source_group,
+                "source_type": "public" if source_group == "social" else "media",
+                "data_type": "real",
+                "pub_time": "2026-08-22T10:00:00",
+            }], []
+
+        self.crawler._collect_from_source_requests = fake_collect
+        data = self.crawler.crawl(
+            ["异常隔离"],
+            max_results=3,
+            collect_level="最小采集",
+            source_strategy="all",
+            social_platforms=["微博"],
+            min_real_results=1,
+        )
+
+        self.assertEqual(set(calls), {"stable", "public_news", "social"})
+        self.assertEqual(
+            {item["source_group"] for item in data},
+            {"public_news", "social"},
+        )
+        self.assertTrue(
+            any("government source failure" in failure["error"]
+                for failure in self.crawler.last_meta["failures"])
+        )
+
+    def test_legacy_stable_first_is_compatible_alias_for_all(self):
+        self.assertEqual(self.crawler._normalize_source_strategy("stable_first"), "all")
+        self.assertEqual(self.crawler._normalize_source_strategy("hybrid"), "all")
+
+    def test_stable_only_does_not_use_public_news(self):
+        calls = []
+
+        def fake_collect(source_requests, keyword, region, collect_level, start_time, end_time,
+                         remaining, progress_callback=None):
+            calls.append(source_requests[0]["source_group"])
+            return [], []
+
+        self.crawler._collect_from_source_requests = fake_collect
+        self.crawler.crawl(
+            ["政府官网验收"],
+            max_results=1,
+            collect_level="最小采集",
+            source_strategy="stable",
+            min_real_results=1,
+        )
+
+        self.assertTrue(calls)
+        self.assertEqual(set(calls), {"stable"})
+
     def test_progress_events_and_quality_metrics_are_emitted(self):
         events = []
         recent_time = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d 10:30")

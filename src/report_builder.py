@@ -105,6 +105,7 @@ def build_data_quality_summary(raw_data: List[dict], meta: Dict) -> Dict:
     real_count = sum(1 for item in data if item.get("data_type", "real") == "real")
     mock_count = sum(1 for item in data if item.get("data_type") == "mock")
     stable_count = sum(1 for item in data if item.get("source_group") == "stable")
+    public_news_count = sum(1 for item in data if item.get("source_group") == "public_news")
     social_count = sum(1 for item in data if item.get("source_group") == "social")
     valid_url_count = sum(1 for item in data if _is_valid_url(item.get("url", "")))
     valid_pub_time_count = sum(1 for item in data if _has_confirmed_pub_time(item))
@@ -128,6 +129,7 @@ def build_data_quality_summary(raw_data: List[dict], meta: Dict) -> Dict:
         "real_count": real_count,
         "mock_count": mock_count,
         "stable_count": stable_count,
+        "public_news_count": public_news_count,
         "social_count": social_count,
         "valid_url_count": valid_url_count,
         "valid_pub_time_count": valid_pub_time_count,

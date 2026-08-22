@@ -82,7 +82,7 @@ def normalize_monitor_payload(payload: dict) -> dict:
         "topic": str(payload.get("topic") or "").strip(),
         "keywords": keywords,
         "region": str(payload.get("region") or "").strip() or "全国",
-        "source_strategy": str(payload.get("source_strategy") or "stable_first").strip(),
+        "source_strategy": str(payload.get("source_strategy") or "all").strip(),
         "collect_level": str(payload.get("collect_level") or "最小采集").strip(),
         "time_range": str(payload.get("time_range") or "近一周").strip(),
         "stable_sources": _text_list(payload.get("stable_sources")),
@@ -326,10 +326,11 @@ class MonitorManager:
         safe_payload = normalize_monitor_payload(payload)
         if not safe_payload["keywords"]:
             raise ValueError("请填写至少一个监测关键词")
-        if not safe_payload["stable_sources"] and not safe_payload["social_platforms"]:
-            raise ValueError("请至少选择一个政府官网或社交平台")
         strategy = safe_payload["source_strategy"]
-        if strategy not in {"stable_first", "stable", "social"}:
+        if strategy in {"stable_first", "hybrid"}:
+            strategy = "all"
+            safe_payload["source_strategy"] = strategy
+        if strategy not in {"all", "stable", "public_news", "social"}:
             raise ValueError("请选择有效的来源方式")
         if strategy == "stable" and not safe_payload["stable_sources"]:
             raise ValueError("只查政府官网时，请至少选择一个政府官网")

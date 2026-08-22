@@ -28,6 +28,7 @@ from src.crawler import (
     NewsCrawler,
     PLATFORM_LIST,
     PRIMARY_SOCIAL_PLATFORMS,
+    PUBLIC_NEWS_SOURCE,
     STABLE_SOURCE_REGISTRY,
     TIME_RANGE_MAP,
     crawl_and_save,
@@ -91,6 +92,7 @@ HISTORY_SUMMARY_FIELDS = (
     "total",
     "real_count",
     "stable_real_count",
+    "public_news_real_count",
     "social_real_count",
 )
 POLICY_BLOCK_CODES = {
@@ -496,7 +498,7 @@ def task_payload_summary(payload):
         "topic": str(payload.get("topic") or "").strip(),
         "keywords": parse_keywords(payload.get("keywords")),
         "region": str(payload.get("region") or "").strip() or "全国",
-        "source_strategy": payload.get("source_strategy") or "stable_first",
+        "source_strategy": payload.get("source_strategy") or "all",
         "collect_level": payload.get("collect_level") or "最小采集",
         "time_range": payload.get("time_range") or "近一周",
         "stable_sources": payload.get("stable_sources") or [],
@@ -547,7 +549,7 @@ def sanitize_task_history_entry(entry):
             "topic": text_value("topic"),
             "keywords": text_list(raw_payload.get("keywords")),
             "region": text_value("region", "全国"),
-            "source_strategy": text_value("source_strategy", "stable_first"),
+            "source_strategy": text_value("source_strategy", "all"),
             "collect_level": text_value("collect_level", "最小采集"),
             "time_range": text_value("time_range", "近一周"),
             "stable_sources": text_list(raw_payload.get("stable_sources")),
@@ -705,7 +707,7 @@ def ensure_current_history_archive() -> str:
                 "topic": str(meta.get("topic") or ""),
                 "keywords": meta.get("keywords") or [],
                 "region": str(meta.get("region") or "全国"),
-                "source_strategy": str(meta.get("source_strategy") or "stable_first"),
+                "source_strategy": str(meta.get("source_strategy") or "all"),
                 "collect_level": str(meta.get("collect_level") or "最小采集"),
                 "time_range": str(meta.get("time_range") or "近一周"),
                 "stable_sources": meta.get("stable_sources") or [],
@@ -868,7 +870,7 @@ def run_crawl_job(task_id: str, payload: dict):
                 if source_acceptance
                 else sanitize_accounts(payload.get("accounts"), include_saved=True)
             ),
-            source_strategy=payload.get("source_strategy") or "stable_first",
+            source_strategy=payload.get("source_strategy") or "all",
             min_real_results=min_real_results,
             progress_callback=emit,
             use_system_proxy=bool(payload.get("use_system_proxy", False)),
@@ -957,7 +959,7 @@ def run_monitor_crawl(
         time_range=payload.get("time_range") or "近一周",
         collect_level=payload.get("collect_level") or "最小采集",
         accounts=sanitize_accounts(None, include_saved=True),
-        source_strategy=payload.get("source_strategy") or "stable_first",
+        source_strategy=payload.get("source_strategy") or "all",
         min_real_results=min_real_results,
         use_system_proxy=bool(payload.get("use_system_proxy", False)),
         enable_debug_snapshots=bool(payload.get("enable_debug_snapshots", False)),
@@ -1705,6 +1707,7 @@ class WebUIHandler(BaseHTTPRequestHandler):
         history_catalog = build_history_catalog()
         return {
             "stable_sources": stable_sources,
+            "public_news_sources": [PUBLIC_NEWS_SOURCE["name"]],
             "social_platforms": PLATFORM_LIST,
             "primary_social_platforms": PRIMARY_SOCIAL_PLATFORMS,
             "time_ranges": list(TIME_RANGE_MAP.keys()),
