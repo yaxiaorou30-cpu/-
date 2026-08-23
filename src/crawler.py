@@ -26,6 +26,8 @@ except ImportError:
 from src.utils.logger import get_logger
 from src.heat_analyzer import PROVINCES_DATA, get_all_provinces, get_cities_by_province
 from src.social_browser import (
+    _public_http_request_target,
+    _public_websocket_request_target,
     SOCIAL_PLATFORM_ADAPTERS,
     XIAOHONGSHU_SEARCH_SOURCES,
     extract_article_from_html,
@@ -36,6 +38,7 @@ from src.social_browser import (
     extract_xiaohongshu_items_from_api_payload,
     get_adapter,
     load_playwright,
+    normalize_site_url,
 )
 from src.social_cli_adapters import (
     ExternalSocialAdapterRegistry,
@@ -363,6 +366,8 @@ class NewsCrawler:
         diagnostic_store: Optional[DiagnosticSnapshotStore] = None,
         live_browser_reader: Optional[Callable[[str, str, int], Tuple[str, str, Optional[str]]]] = None,
         live_login_probe: Optional[Callable[[str, int], Dict]] = None,
+        site_session_resolver: Optional[Callable[[str], Optional[Dict]]] = None,
+        site_session_status_recorder: Optional[Callable[[str, bool, str], None]] = None,
     ):
         self.session = requests.Session() if CRAWLER_AVAILABLE else None
         if self.session:
@@ -376,6 +381,10 @@ class NewsCrawler:
         self._active_parser_hint = ""
         self.live_browser_reader = live_browser_reader
         self.live_login_probe = live_login_probe
+        self.site_session_resolver = site_session_resolver
+        self.site_session_status_recorder = site_session_status_recorder
+        self._site_session_failed_versions = set()
+        self._site_session_statuses: Dict[Tuple[str, str], bool] = {}
         self.source_policy = source_policy or SourceAccessPolicy(
             PROJECT_ROOT / "config" / "source_access_rules.json",
             audit_path=PROJECT_ROOT / "data" / "source_policy_cache.json",
@@ -451,6 +460,8 @@ class NewsCrawler:
             min_real_results: 最低真实结果数，默认取采集等级的 min_content
             source_acceptance: 仅验证稳定源连通性、解析和最小字段，不按关键词/时间过滤
         """
+        self._site_session_failed_versions.clear()
+        self._site_session_statuses.clear()
         source_strategy = self._normalize_source_strategy(source_strategy)
         self._source_acceptance_mode = bool(source_acceptance and source_strategy == "stable")
         level_config = COLLECT_LEVELS.get(collect_level, COLLECT_LEVELS["标准采集"])
@@ -929,13 +940,128 @@ class NewsCrawler:
             return ""
         return json.dumps({"cookies": cookies, "origins": []}, ensure_ascii=False)
 
+    @classmethod
+    def _site_session_url_error(
+        cls,
+        url: str,
+        exact_domain: str,
+        *,
+        resolve_dns: bool = True,
+    ) -> str:
+        try:
+            target = normalize_site_url(url, resolve_dns=False)
+        except ValueError as exc:
+            message = str(exc)
+            if "HTTPS" in message:
+                return "site session requires HTTPS"
+            if any(marker in message for marker in ("公网", "私网", "保留", "解析")):
+                return "site session public DNS validation failed"
+            return f"site session URL rejected: {message}"
+        try:
+            expected = normalize_site_url(
+                f"https://{str(exact_domain or '').strip().strip('.')}/",
+                resolve_dns=False,
+            )["domain"]
+        except ValueError:
+            return "site session exact domain mismatch"
+        if target["domain"] != expected:
+            return "site session exact domain mismatch"
+        if resolve_dns:
+            try:
+                normalize_site_url(target["url"], resolve_dns=True)
+            except ValueError:
+                return "site session public DNS validation failed"
+        return ""
+
+    @staticmethod
+    def _site_session_auth_error(status: int, final_url: str, _html: str) -> str:
+        if int(status or 0) in {401, 403}:
+            return f"site session authentication required: HTTP {int(status)}"
+        path_parts = {part.casefold() for part in urlparse(final_url or "").path.split("/") if part}
+        if path_parts.intersection({"login", "signin", "sign-in"}):
+            return "site session authentication required: redirected to login page"
+        return ""
+
+    @staticmethod
+    def _site_session_has_visible_password(page) -> bool:
+        try:
+            return page.locator("input[type='password']:visible").count() > 0
+        except Exception:
+            return False
+
+    @staticmethod
+    def _scrapling_detail_is_usable(detail: Dict) -> bool:
+        content = re.sub(r"\s+", " ", str((detail or {}).get("content") or "")).strip()
+        if len(content) < 80:
+            return False
+        title = re.sub(r"\s+", " ", str((detail or {}).get("title") or "")).strip()
+        normalized_title = title.casefold().strip(" .。!！…")
+        blocked_titles = (
+            "访问受限",
+            "安全验证",
+            "请完成安全验证",
+            "人机验证",
+            "请稍后重试",
+            "access denied",
+            "just a moment",
+            "checking your browser",
+            "attention required",
+        )
+        return not any(
+            normalized_title == marker or normalized_title.startswith(f"{marker} ")
+            for marker in blocked_titles
+        )
+
+    @staticmethod
+    def _site_session_error_needs_relogin(error: str) -> bool:
+        normalized = str(error or "").strip().casefold()
+        return normalized.startswith("site session authentication required") or normalized in {
+            "browser session storage state is invalid",
+            "http 401",
+            "http 403",
+        }
+
+    def _record_site_session_status(
+        self,
+        domain: str,
+        needs_relogin: bool,
+        session_version: str,
+    ) -> None:
+        session_version = str(session_version or "").strip()
+        if not domain or not session_version:
+            return
+        needs_relogin = bool(needs_relogin)
+        session_key = (domain, session_version)
+        if self._site_session_statuses.get(session_key) is needs_relogin:
+            return
+        self._site_session_statuses[session_key] = needs_relogin
+        if needs_relogin:
+            self._site_session_failed_versions.add(session_key)
+        else:
+            self._site_session_failed_versions.discard(session_key)
+        if not self.site_session_status_recorder:
+            return
+        try:
+            self.site_session_status_recorder(
+                domain,
+                needs_relogin,
+                session_version,
+            )
+        except Exception as exc:
+            logger.warning("网站会话状态回传失败: %s", type(exc).__name__)
+
     def _request_browser_html(
         self,
         url: str,
         platform: str,
         storage_state_text: str,
         timeout: int = 10,
+        exact_domain: str = "",
     ) -> Tuple[str, str, Optional[str]]:
+        if exact_domain:
+            target_error = self._site_session_url_error(url, exact_domain)
+            if target_error:
+                return "", url, target_error
         decision = self.source_policy.check(
             url,
             f"{platform}浏览器采集",
@@ -949,24 +1075,68 @@ class NewsCrawler:
             return "", url, "browser session storage state is invalid"
         try:
             sync_playwright, PlaywrightTimeoutError = load_playwright()
+            visible_password = False
             with sync_playwright() as playwright:
                 browser = playwright.chromium.launch(headless=True)
+                context_options = {
+                    "storage_state": storage_state,
+                    "viewport": {"width": 1280, "height": 860},
+                    "locale": "zh-CN",
+                    "extra_http_headers": {"Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8"},
+                }
+                if exact_domain:
+                    context_options["service_workers"] = "block"
                 context = browser.new_context(
-                    storage_state=storage_state,
-                    viewport={"width": 1280, "height": 860},
-                    locale="zh-CN",
-                    extra_http_headers={"Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8"},
+                    **context_options,
                 )
+
+                if exact_domain:
+                    def guard_site_websocket(websocket):
+                        try:
+                            _public_websocket_request_target(
+                                websocket.url,
+                                exact_domain=exact_domain,
+                            )
+                            websocket.connect_to_server()
+                        except Exception:
+                            websocket.close(
+                                code=1008,
+                                reason="blocked by site session policy",
+                            )
+
+                    context.route_web_socket("**", guard_site_websocket)
                 page = context.new_page()
                 blocked_navigation = []
+                blocked_site_navigation = []
 
-                def guard_main_navigation(route, request):
+                def guard_site_request(route, request):
                     try:
-                        is_main_navigation = (
-                            request.is_navigation_request()
-                            and request.frame == page.main_frame
-                        )
-                        if is_main_navigation:
+                        if exact_domain:
+                            try:
+                                _public_http_request_target(request.url)
+                            except ValueError:
+                                blocked_site_navigation.append(
+                                    "site session public DNS validation failed"
+                                )
+                                route.abort("blockedbyclient")
+                                return
+                        is_top_navigation = False
+                        if request.is_navigation_request():
+                            frame = request.frame
+                            is_top_navigation = (
+                                frame is None or getattr(frame, "parent_frame", None) is None
+                            )
+                        if is_top_navigation:
+                            if exact_domain:
+                                route_error = self._site_session_url_error(
+                                    request.url,
+                                    exact_domain,
+                                    resolve_dns=False,
+                                )
+                                if route_error:
+                                    blocked_site_navigation.append(route_error)
+                                    route.abort("blockedbyclient")
+                                    return
                             route_decision = self.source_policy.check(
                                 request.url,
                                 f"{platform}浏览器导航",
@@ -980,7 +1150,14 @@ class NewsCrawler:
                     except Exception:
                         route.abort("blockedbyclient")
 
-                page.route("**/*", guard_main_navigation)
+                if exact_domain:
+                    context.on(
+                        "page",
+                        lambda opened_page: opened_page.close() if opened_page is not page else None,
+                    )
+                    context.route("**/*", guard_site_request)
+                else:
+                    page.route("**/*", guard_site_request)
                 parsed_target = urlparse(url)
                 is_xhs_detail_page = (
                     platform == "小红书"
@@ -1009,6 +1186,15 @@ class NewsCrawler:
                         wait_until="domcontentloaded",
                         timeout=max(timeout, 5) * 1000,
                     )
+                    main_status = int(getattr(main_response, "status", 0) or 0)
+                    if exact_domain:
+                        auth_error = self._site_session_auth_error(
+                            main_status,
+                            page.url or url,
+                            "",
+                        )
+                        if auth_error:
+                            return "", page.url or url, auth_error
                     if main_response and main_response.status >= 400:
                         return "", page.url, f"HTTP {main_response.status}"
                     try:
@@ -1016,8 +1202,10 @@ class NewsCrawler:
                     except PlaywrightTimeoutError:
                         pass
                     try:
-                        adapter = get_adapter(platform)
-                        selector = ", ".join(adapter.item_selectors)
+                        selector = ""
+                        if not exact_domain:
+                            adapter = get_adapter(platform)
+                            selector = ", ".join(adapter.item_selectors)
                         if is_xhs_detail_page:
                             page.wait_for_selector(
                                 "#detail-title, #detail-desc, a[href*='/user/profile/']",
@@ -1039,6 +1227,8 @@ class NewsCrawler:
                         visible_text = page.locator("body").inner_text(timeout=2000)
                     except Exception:
                         visible_text = ""
+                    if exact_domain:
+                        visible_password = self._site_session_has_visible_password(page)
                     try:
                         visible_verification_widget = bool(page.evaluate(
                             """() => {
@@ -1223,6 +1413,8 @@ class NewsCrawler:
                         html += f'\n<script id="codex-extracted-xhs-detail" type="application/json">{payload}</script>'
                     final_url = page.url
                 except PlaywrightTimeoutError:
+                    if blocked_site_navigation:
+                        return "", url, blocked_site_navigation[-1]
                     if blocked_navigation:
                         blocked = blocked_navigation[-1]
                         return (
@@ -1232,6 +1424,8 @@ class NewsCrawler:
                         )
                     return "", url, "browser session request timeout"
                 except Exception:
+                    if blocked_site_navigation:
+                        return "", url, blocked_site_navigation[-1]
                     if blocked_navigation:
                         blocked = blocked_navigation[-1]
                         return (
@@ -1245,6 +1439,30 @@ class NewsCrawler:
                     browser.close()
             if not html.strip() or not BeautifulSoup(html, "html.parser").get_text(" ", strip=True):
                 return "", url, "browser session returned empty page"
+            if exact_domain:
+                final_error = self._site_session_url_error(final_url, exact_domain)
+                if final_error:
+                    return "", final_url, final_error
+                final_decision = self.source_policy.check(
+                    final_url,
+                    f"{platform}浏览器最终地址",
+                    access_mode=AUTHORIZED_SESSION_ACCESS_MODE,
+                )
+                if not final_decision.allowed:
+                    return (
+                        "",
+                        final_url,
+                        f"source policy blocked [{final_decision.code}]: {final_decision.reason}",
+                    )
+                if visible_password:
+                    return (
+                        "",
+                        final_url,
+                        "site session authentication required: visible password form detected",
+                    )
+                auth_error = self._site_session_auth_error(main_status, final_url, html)
+                if auth_error:
+                    return "", final_url, auth_error
             return html, final_url, None
         except Exception as exc:
             return "", url, f"browser session request failed: {exc}"
@@ -3862,6 +4080,91 @@ class NewsCrawler:
         if any(domain in urlparse(url).netloc for domain in ["baidu.com", "sogou.com"]):
             return
 
+        try:
+            target_domain = normalize_site_url(url, resolve_dns=False)["domain"]
+        except ValueError:
+            target_domain = ""
+
+        site_session = None
+        if self.site_session_resolver:
+            try:
+                site_session = self.site_session_resolver(url)
+            except Exception as exc:
+                logger.debug("网站会话解析失败，继续匿名正文获取: %s", type(exc).__name__)
+        if isinstance(site_session, dict):
+            exact_domain = str(site_session.get("domain") or "").strip()
+            session_version = str(
+                site_session.get("session_version") or ""
+            ).strip()
+            session_key = (target_domain, session_version)
+            session_domain_matches = bool(
+                target_domain
+                and exact_domain
+                and session_version
+                and not self._site_session_url_error(
+                    url,
+                    exact_domain,
+                    resolve_dns=False,
+                )
+            )
+            storage_state = site_session.get("storage_state")
+            if isinstance(storage_state, dict):
+                storage_state_text = json.dumps(storage_state, ensure_ascii=False)
+            elif isinstance(storage_state, str):
+                storage_state_text = storage_state.strip()
+            else:
+                storage_state_text = ""
+            if (
+                exact_domain
+                and storage_state_text
+                and session_key not in self._site_session_failed_versions
+            ):
+                try:
+                    rendered_html, rendered_url, session_error = self._request_browser_html(
+                        url=url,
+                        platform="网站会话",
+                        storage_state_text=storage_state_text,
+                        timeout=45,
+                        exact_domain=exact_domain,
+                    )
+                except Exception as exc:
+                    rendered_html, rendered_url = "", url
+                    session_error = f"site session request failed: {type(exc).__name__}"
+                if (
+                    session_domain_matches
+                    and self._site_session_error_needs_relogin(session_error)
+                ):
+                    self._record_site_session_status(
+                        target_domain,
+                        True,
+                        session_version,
+                    )
+                if not session_error and rendered_html:
+                    if session_domain_matches:
+                        self._record_site_session_status(
+                            target_domain,
+                            False,
+                            session_version,
+                        )
+                    detail = self._extract_article_content(rendered_html, rendered_url or url)
+                    if detail.get("content"):
+                        detail["detail_source"] = "site_browser_session"
+                        self._apply_article_detail(record, detail, rendered_url or url)
+                        if (
+                            record.get("detail_enriched")
+                            and record.get("detail_source") == "site_browser_session"
+                        ):
+                            return
+            elif (
+                session_domain_matches
+                and session_key not in self._site_session_failed_versions
+            ):
+                self._record_site_session_status(
+                    target_domain,
+                    True,
+                    session_version,
+                )
+
         scrapling = getattr(self.external_content_adapters, "scrapling", None)
         if scrapling and scrapling.is_available():
             access_decision = self.source_policy.check(url, "article-detail")
@@ -3877,9 +4180,14 @@ class NewsCrawler:
                     final_decision = self.source_policy.check(rendered_url, "article-detail")
                     if final_decision.allowed:
                         detail = self._extract_article_content(rendered_html, rendered_url)
-                        detail["detail_source"] = "scrapling_stealth"
-                        self._apply_article_detail(record, detail, rendered_url)
-                        return
+                        if self._scrapling_detail_is_usable(detail):
+                            detail["detail_source"] = "scrapling_stealth"
+                            self._apply_article_detail(record, detail, rendered_url)
+                            if (
+                                record.get("detail_enriched")
+                                and record.get("detail_source") == "scrapling_stealth"
+                            ):
+                                return
 
         html_text, final_url, error = self._request_html(url, "article-detail")
         if error:
@@ -4738,6 +5046,8 @@ def crawl_and_save(
     live_browser_reader: Optional[Callable[[str, str, int], Tuple[str, str, Optional[str]]]] = None,
     live_login_probe: Optional[Callable[[str, int], Dict]] = None,
     topic: str = None,
+    site_session_resolver: Optional[Callable[[str], Optional[Dict]]] = None,
+    site_session_status_recorder: Optional[Callable[[str, bool, str], None]] = None,
 ) -> str:
     """采集并保存数据"""
     crawler = NewsCrawler(
@@ -4746,6 +5056,8 @@ def crawl_and_save(
         enable_debug_snapshots=enable_debug_snapshots,
         live_browser_reader=live_browser_reader,
         live_login_probe=live_login_probe,
+        site_session_resolver=site_session_resolver,
+        site_session_status_recorder=site_session_status_recorder,
     )
     
     if accounts:

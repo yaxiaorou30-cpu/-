@@ -1,6 +1,11 @@
 import json
+import inspect
+import socket
 import unittest
 from datetime import datetime, timedelta
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 from urllib.parse import parse_qs, urlparse
 
 from src.analyzer import Analyzer
@@ -9,6 +14,7 @@ from src.crawler import (
     PLATFORM_LIST,
     STABLE_CHANNELS,
     STABLE_SOURCE_REGISTRY,
+    crawl_and_save,
 )
 from src.social_browser import (
     extract_douyin_items_from_api_payload,
@@ -21,6 +27,7 @@ from src.social_browser import (
     extract_xiaohongshu_items_from_api_payload,
 )
 from src.preprocessor import Preprocessor
+from src.source_policy import AUTHORIZED_SESSION_ACCESS_MODE, SourceAccessPolicy
 from tests.helpers import AllowAllSourcePolicy
 
 
@@ -2107,6 +2114,611 @@ class CrawlerPolicyTests(unittest.TestCase):
         self.assertLess(abs(((now - timedelta(hours=3)) - hours_ago).total_seconds()), 5)
         self.assertEqual(yesterday.hour, 12)
         self.assertEqual(date_text.year, 2026)
+
+
+class SiteSessionArticleTests(unittest.TestCase):
+    ARTICLE_HTML = """
+    <html><head><title>登录后新闻详情</title></head><body><article>
+      <h1>登录后新闻详情</h1>
+      <p>这是通过网站登录会话读取到的新闻正文，用于验证登录状态优先于匿名抓取方式，并且正文内容足够长。</p>
+      <p>第二段继续补充事件经过、处置结果和公开回应，确保通用正文提取器能够稳定识别本次测试内容。</p>
+    </article></body></html>
+    """
+
+    @staticmethod
+    def _session_resolver(url):
+        if urlparse(url).hostname == "news.example.com":
+            return {
+                "domain": "news.example.com",
+                "storage_state": {"cookies": [], "origins": []},
+                "session_version": "test-session-v1",
+            }
+        return None
+
+    def test_matching_site_session_is_used_before_scrapling(self):
+        class UnexpectedScrapling:
+            @staticmethod
+            def is_available():
+                return True
+
+            @staticmethod
+            def fetch(**kwargs):
+                raise AssertionError("会话成功后不应调用 Scrapling")
+
+        adapters = type("Adapters", (), {"scrapling": UnexpectedScrapling()})()
+        crawler = NewsCrawler(
+            site_session_resolver=self._session_resolver,
+            external_content_adapters=adapters,
+        )
+        browser_calls = []
+
+        def fake_browser(**kwargs):
+            browser_calls.append(kwargs)
+            return self.ARTICLE_HTML, kwargs["url"], None
+
+        crawler._request_browser_html = fake_browser
+        crawler._request_html = lambda *args, **kwargs: self.fail("会话成功后不应普通回退")
+        record = {"url": "https://news.example.com/a", "title": "短标题", "content": "摘要"}
+
+        crawler._enrich_with_article_content(record)
+
+        self.assertEqual(record["detail_source"], "site_browser_session")
+        self.assertTrue(record["detail_enriched"])
+        self.assertEqual(browser_calls[0]["exact_domain"], "news.example.com")
+        self.assertEqual(json.loads(browser_calls[0]["storage_state_text"]), {"cookies": [], "origins": []})
+
+    def test_site_session_failure_falls_back_without_forwarding_state_to_scrapling(self):
+        scrapling_calls = []
+
+        class Scrapling:
+            @staticmethod
+            def is_available():
+                return True
+
+            @staticmethod
+            def fetch(**kwargs):
+                scrapling_calls.append(kwargs)
+                return type("Outcome", (), {
+                    "data": {
+                        "html": SiteSessionArticleTests.ARTICLE_HTML.replace("网站登录会话", "Scrapling"),
+                        "final_url": kwargs["url"],
+                    }
+                })()
+
+        adapters = type("Adapters", (), {"scrapling": Scrapling()})()
+        crawler = NewsCrawler(
+            site_session_resolver=self._session_resolver,
+            external_content_adapters=adapters,
+        )
+        crawler._request_browser_html = lambda **kwargs: (
+            "",
+            kwargs["url"],
+            "site session authentication required",
+        )
+        crawler._request_html = lambda *args, **kwargs: self.fail("Scrapling 成功后不应普通回退")
+        record = {"url": "https://news.example.com/a", "title": "短标题", "content": "摘要"}
+
+        crawler._enrich_with_article_content(record)
+
+        self.assertEqual(record["detail_source"], "scrapling_stealth")
+        self.assertEqual(len(scrapling_calls), 1)
+        self.assertNotIn("storage_state", scrapling_calls[0])
+        self.assertNotIn("cookie", scrapling_calls[0])
+
+    def test_site_session_short_content_falls_back_to_scrapling(self):
+        scrapling_calls = []
+        session_statuses = []
+        session_html = "<html><body><article><p>" + ("会话页短内容" * 5) + "</p></article></body></html>"
+        scrapling_html = (
+            "<html><body><article><p>"
+            + ("Scrapling 补充后的完整新闻正文，包含更充分的事件经过和公开回应。" * 10)
+            + "</p></article></body></html>"
+        )
+
+        class Scrapling:
+            @staticmethod
+            def is_available():
+                return True
+
+            @staticmethod
+            def fetch(**kwargs):
+                scrapling_calls.append(kwargs)
+                return type("Outcome", (), {
+                    "data": {"html": scrapling_html, "final_url": kwargs["url"]}
+                })()
+
+        crawler = NewsCrawler(
+            site_session_resolver=self._session_resolver,
+            site_session_status_recorder=lambda domain, needs_relogin, session_version: session_statuses.append(
+                (domain, needs_relogin, session_version)
+            ),
+            external_content_adapters=type("Adapters", (), {"scrapling": Scrapling()})(),
+        )
+        crawler._request_browser_html = lambda **kwargs: (
+            session_html,
+            kwargs["url"],
+            None,
+        )
+        crawler._request_html = lambda *args, **kwargs: self.fail("Scrapling 成功后不应普通回退")
+        record = {
+            "url": "https://news.example.com/a",
+            "title": "已有新闻标题",
+            "content": "已有摘要内容" * 12,
+        }
+
+        crawler._enrich_with_article_content(record)
+
+        self.assertEqual(len(scrapling_calls), 1)
+        self.assertEqual(record["detail_source"], "scrapling_stealth")
+        self.assertTrue(record["detail_enriched"])
+        self.assertIn("Scrapling 补充后的完整新闻正文", record["content"])
+        self.assertEqual(
+            session_statuses,
+            [("news.example.com", False, "test-session-v1")],
+        )
+
+    def test_scrapling_shell_page_falls_back_to_plain_request(self):
+        class ShellPageScrapling:
+            @staticmethod
+            def is_available():
+                return True
+
+            @staticmethod
+            def fetch(**kwargs):
+                return type(
+                    "Outcome",
+                    (),
+                    {
+                        "data": {
+                            "html": (
+                                "<html><title>访问受限</title><body><p>"
+                                + ("请完成安全验证后继续访问，本页面暂不提供新闻正文。" * 20)
+                                + "</p></body></html>"
+                            ),
+                            "final_url": kwargs["url"],
+                        }
+                    },
+                )()
+
+        crawler = NewsCrawler(
+            external_content_adapters=type(
+                "Adapters",
+                (),
+                {"scrapling": ShellPageScrapling()},
+            )(),
+        )
+        plain_calls = []
+
+        def plain_request(url, channel, timeout=10):
+            plain_calls.append((url, channel))
+            return self.ARTICLE_HTML, url, None
+
+        crawler._request_html = plain_request
+        record = {
+            "url": "https://news.example.com/a",
+            "title": "已有新闻标题",
+            "content": "公开摘要",
+        }
+
+        crawler._enrich_with_article_content(record)
+
+        self.assertEqual(
+            plain_calls,
+            [("https://news.example.com/a", "article-detail")],
+        )
+        self.assertIn("这是通过网站登录会话读取到的新闻正文", record["content"])
+
+    def test_deterministic_session_failure_circuit_breaks_domain_and_reports_relogin(self):
+        resolver_calls = []
+        browser_calls = []
+        session_statuses = []
+
+        def resolver(url):
+            resolver_calls.append(url)
+            return self._session_resolver(url)
+
+        crawler = NewsCrawler(
+            site_session_resolver=resolver,
+            site_session_status_recorder=lambda domain, needs_relogin, session_version: session_statuses.append(
+                (domain, needs_relogin, session_version)
+            ),
+            external_content_adapters=type(
+                "Adapters",
+                (),
+                {"scrapling": type("Scrapling", (), {"is_available": staticmethod(lambda: False)})()},
+            )(),
+        )
+
+        def failed_browser(**kwargs):
+            browser_calls.append(kwargs)
+            return "", kwargs["url"], "site session authentication required: HTTP 401"
+
+        crawler._request_browser_html = failed_browser
+        crawler._request_html = lambda url, channel: ("", url, "anonymous unavailable")
+
+        for suffix in ("a", "b"):
+            crawler._enrich_with_article_content({
+                "url": f"https://news.example.com/{suffix}",
+                "title": "新闻标题",
+                "content": "公开摘要",
+            })
+
+        self.assertEqual(len(resolver_calls), 2)
+        self.assertEqual(len(browser_calls), 1)
+        self.assertEqual(
+            session_statuses,
+            [("news.example.com", True, "test-session-v1")],
+        )
+
+    def test_new_saved_session_is_retried_after_old_version_failed(self):
+        versions = iter(("old-session", "new-session"))
+        browser_versions = []
+        session_statuses = []
+
+        def resolver(_url):
+            return {
+                "domain": "news.example.com",
+                "storage_state": {"cookies": [], "origins": []},
+                "session_version": next(versions),
+            }
+
+        crawler = NewsCrawler(
+            site_session_resolver=resolver,
+            site_session_status_recorder=lambda domain, needs_relogin, session_version: session_statuses.append(
+                (domain, needs_relogin, session_version)
+            ),
+            external_content_adapters=type(
+                "Adapters",
+                (),
+                {"scrapling": type("Scrapling", (), {"is_available": staticmethod(lambda: False)})()},
+            )(),
+        )
+
+        def browser_request(**kwargs):
+            storage_state = json.loads(kwargs["storage_state_text"])
+            browser_versions.append(storage_state)
+            if len(browser_versions) == 1:
+                return "", kwargs["url"], "site session authentication required"
+            return self.ARTICLE_HTML, kwargs["url"], None
+
+        crawler._request_browser_html = browser_request
+        crawler._request_html = lambda url, channel: ("", url, "anonymous unavailable")
+
+        first = {"url": "https://news.example.com/a", "title": "旧会话", "content": "摘要"}
+        second = {"url": "https://news.example.com/b", "title": "新会话", "content": "摘要"}
+        crawler._enrich_with_article_content(first)
+        crawler._enrich_with_article_content(second)
+
+        self.assertEqual(len(browser_versions), 2)
+        self.assertEqual(second["detail_source"], "site_browser_session")
+        self.assertEqual(
+            session_statuses,
+            [
+                ("news.example.com", True, "old-session"),
+                ("news.example.com", False, "new-session"),
+            ],
+        )
+
+    def test_transient_session_failure_does_not_trip_relogin_circuit_breaker(self):
+        browser_calls = []
+        session_statuses = []
+        crawler = NewsCrawler(
+            site_session_resolver=self._session_resolver,
+            site_session_status_recorder=lambda domain, needs_relogin, session_version: session_statuses.append(
+                (domain, needs_relogin, session_version)
+            ),
+            external_content_adapters=type(
+                "Adapters",
+                (),
+                {"scrapling": type("Scrapling", (), {"is_available": staticmethod(lambda: False)})()},
+            )(),
+        )
+
+        def timed_out_browser(**kwargs):
+            browser_calls.append(kwargs)
+            return "", kwargs["url"], "browser session request timeout"
+
+        crawler._request_browser_html = timed_out_browser
+        crawler._request_html = lambda url, channel: ("", url, "anonymous unavailable")
+
+        for suffix in ("a", "b"):
+            crawler._enrich_with_article_content({
+                "url": f"https://news.example.com/{suffix}",
+                "title": "新闻标题",
+                "content": "公开摘要",
+            })
+
+        self.assertEqual(len(browser_calls), 2)
+        self.assertEqual(session_statuses, [])
+
+    def test_crawl_resets_site_session_circuit_breaker_for_each_run(self):
+        crawler = NewsCrawler()
+        crawler._site_session_failed_versions.add(("news.example.com", "old-session"))
+        crawler._site_session_statuses[("news.example.com", "old-session")] = True
+
+        crawler.crawl(
+            keywords=[],
+            max_results=1,
+            social_platforms=[],
+            stable_sources=[],
+            source_strategy="public_news",
+            min_real_results=0,
+        )
+
+        self.assertEqual(crawler._site_session_failed_versions, set())
+        self.assertEqual(crawler._site_session_statuses, {})
+
+    def test_site_session_and_scrapling_failure_fall_back_to_plain_request(self):
+        class UnavailableScrapling:
+            @staticmethod
+            def is_available():
+                return False
+
+        adapters = type("Adapters", (), {"scrapling": UnavailableScrapling()})()
+        crawler = NewsCrawler(
+            site_session_resolver=self._session_resolver,
+            external_content_adapters=adapters,
+        )
+        crawler._request_browser_html = lambda **kwargs: ("", kwargs["url"], "HTTP 401")
+        plain_calls = []
+
+        def plain_request(url, channel, timeout=10):
+            plain_calls.append((url, channel))
+            return self.ARTICLE_HTML.replace("网站登录会话", "普通请求"), url, None
+
+        crawler._request_html = plain_request
+        record = {"url": "https://news.example.com/a", "title": "短标题", "content": "摘要"}
+
+        crawler._enrich_with_article_content(record)
+
+        self.assertEqual(plain_calls, [("https://news.example.com/a", "article-detail")])
+        self.assertIn("普通请求", record["content"])
+
+    def test_generic_browser_target_requires_https_exact_domain_and_public_dns(self):
+        crawler = NewsCrawler()
+
+        _, _, http_error = crawler._request_browser_html(
+            url="http://news.example.com/a",
+            platform="网站会话",
+            storage_state_text="{}",
+            exact_domain="news.example.com",
+        )
+        _, _, domain_error = crawler._request_browser_html(
+            url="https://other.example.com/a",
+            platform="网站会话",
+            storage_state_text="{}",
+            exact_domain="news.example.com",
+        )
+        with patch(
+            "src.social_browser.socket.getaddrinfo",
+            return_value=[
+                (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", 443)),
+            ],
+        ):
+            _, _, private_error = crawler._request_browser_html(
+                url="https://news.example.com/a",
+                platform="网站会话",
+                storage_state_text="{}",
+                exact_domain="news.example.com",
+            )
+
+        self.assertIn("HTTPS", http_error)
+        self.assertIn("exact domain", domain_error)
+        self.assertIn("public DNS", private_error)
+
+    def test_generic_browser_aborts_literal_private_subrequests_and_skips_social_adapter(self):
+        crawler = NewsCrawler()
+        page = MagicMock()
+        page.url = "https://news.example.com/a"
+        page.main_frame = SimpleNamespace(parent_frame=None)
+        page.goto.return_value = SimpleNamespace(status=200)
+        page.evaluate.return_value = False
+        page.locator.return_value.inner_text.return_value = "登录后新闻正文内容"
+        page.content.return_value = self.ARTICLE_HTML
+        routed = {}
+
+        popup_frame = SimpleNamespace(parent_frame=None)
+        iframe = SimpleNamespace(parent_frame=page.main_frame)
+
+        def install_route(_pattern, handler):
+            for name, request_url, is_navigation, frame in (
+                ("private", "http://127.0.0.1/admin", False, None),
+                ("private_dns", "https://private-dns.example/admin", False, None),
+                ("public", "https://cdn.example.net/app.js", False, None),
+                ("public_http_same", "http://news.example.com/asset.js", False, None),
+                ("public_alt_port_same", "https://news.example.com:8443/asset.js", False, None),
+                ("public_iframe", "https://news.example.com/embed", True, iframe),
+                ("cross_navigation", "https://other.example.com/a", True, popup_frame),
+            ):
+                route = MagicMock()
+                request = SimpleNamespace(
+                    url=request_url,
+                    is_navigation_request=lambda value=is_navigation: value,
+                    frame=frame,
+                )
+                handler(route, request)
+                routed[name] = route
+
+        context = MagicMock()
+        context.new_page.return_value = page
+        context.route.side_effect = install_route
+        websocket_routes = {}
+
+        def install_websocket_route(_pattern, handler):
+            for name, request_url in (
+                ("private", "ws://127.0.0.1/admin"),
+                ("cross_domain", "wss://other.example.com/socket"),
+                ("same_domain", "wss://news.example.com/socket"),
+            ):
+                websocket = MagicMock()
+                websocket.url = request_url
+                handler(websocket)
+                websocket_routes[name] = websocket
+
+        context.route_web_socket.side_effect = install_websocket_route
+        context_events = {}
+        context.on.side_effect = lambda event, handler: context_events.setdefault(event, handler)
+        browser = MagicMock()
+        browser.new_context.return_value = context
+        playwright = MagicMock()
+        playwright.chromium.launch.return_value = browser
+        playwright_context = MagicMock()
+        playwright_context.__enter__.return_value = playwright
+
+        dns_lookups = []
+
+        def resolve_public_dns(host, _port, **_kwargs):
+            dns_lookups.append(host)
+            if host == "private-dns.example":
+                return [
+                    (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443)),
+                    (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.0.0.8", 443)),
+                ]
+            return [
+                (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443)),
+            ]
+
+        with (
+            patch(
+                "src.social_browser.socket.getaddrinfo",
+                side_effect=resolve_public_dns,
+            ),
+            patch("src.crawler.load_playwright", return_value=(lambda: playwright_context, TimeoutError)),
+            patch("src.crawler.get_adapter", side_effect=AssertionError("generic 会话不应读取社交适配器")),
+        ):
+            html, final_url, error = crawler._request_browser_html(
+                url="https://news.example.com/a",
+                platform="网站会话",
+                storage_state_text='{"cookies": [], "origins": []}',
+                exact_domain="news.example.com",
+            )
+
+        self.assertIsNone(error)
+        self.assertEqual(final_url, "https://news.example.com/a")
+        self.assertIn("登录后新闻详情", html)
+        self.assertEqual(browser.new_context.call_args.kwargs["service_workers"], "block")
+        page.route.assert_not_called()
+        context.route.assert_called_once()
+        context.route_web_socket.assert_called_once()
+        routed["private"].abort.assert_called_once_with("blockedbyclient")
+        routed["private"].continue_.assert_not_called()
+        routed["private_dns"].abort.assert_called_once_with("blockedbyclient")
+        routed["public"].continue_.assert_called_once_with()
+        routed["public_http_same"].abort.assert_called_once_with("blockedbyclient")
+        routed["public_http_same"].continue_.assert_not_called()
+        routed["public_alt_port_same"].abort.assert_called_once_with("blockedbyclient")
+        routed["public_alt_port_same"].continue_.assert_not_called()
+        routed["public_iframe"].continue_.assert_called_once_with()
+        routed["cross_navigation"].abort.assert_called_once_with("blockedbyclient")
+        websocket_routes["private"].close.assert_called_once()
+        websocket_routes["private"].connect_to_server.assert_not_called()
+        websocket_routes["cross_domain"].close.assert_called_once()
+        websocket_routes["cross_domain"].connect_to_server.assert_not_called()
+        websocket_routes["same_domain"].connect_to_server.assert_called_once_with()
+        websocket_routes["same_domain"].close.assert_not_called()
+        self.assertIn("cdn.example.net", dns_lookups)
+        popup = MagicMock()
+        context_events["page"](popup)
+        popup.close.assert_called_once_with()
+
+        page.url = "https://other.example.com/a"
+        with (
+            patch(
+                "src.social_browser.socket.getaddrinfo",
+                return_value=[
+                    (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443)),
+                ],
+            ),
+            patch("src.crawler.load_playwright", return_value=(lambda: playwright_context, TimeoutError)),
+            patch("src.crawler.get_adapter", side_effect=AssertionError("generic 会话不应读取社交适配器")),
+        ):
+            _, rejected_url, final_error = crawler._request_browser_html(
+                url="https://news.example.com/a",
+                platform="网站会话",
+                storage_state_text='{"cookies": [], "origins": []}',
+                exact_domain="news.example.com",
+            )
+
+        self.assertEqual(rejected_url, "https://other.example.com/a")
+        self.assertIn("exact domain", final_error)
+
+    def test_obvious_login_page_and_auth_status_are_session_failures(self):
+        crawler = NewsCrawler()
+
+        self.assertTrue(crawler._site_session_auth_error(401, "https://news.example.com/a", ""))
+        self.assertTrue(crawler._site_session_auth_error(403, "https://news.example.com/a", ""))
+        self.assertTrue(crawler._site_session_auth_error(
+            200,
+            "https://news.example.com/login",
+            '<form><input type="password" name="password"></form>',
+        ))
+        self.assertEqual(
+            crawler._site_session_auth_error(
+                200,
+                "https://news.example.com/a",
+                '<form><input type="password" name="password"></form>',
+            ),
+            "",
+        )
+        self.assertEqual(
+            crawler._site_session_auth_error(200, "https://news.example.com/a", self.ARTICLE_HTML),
+            "",
+        )
+        article_with_hidden_login = self.ARTICLE_HTML.replace(
+            "</body>",
+            '<div hidden><form><input type="password" name="password"></form></div></body>',
+        )
+        self.assertEqual(
+            crawler._site_session_auth_error(
+                200,
+                "https://news.example.com/a",
+                article_with_hidden_login,
+            ),
+            "",
+        )
+
+        page = MagicMock()
+        page.locator.return_value.count.return_value = 1
+        self.assertTrue(crawler._site_session_has_visible_password(page))
+        page.locator.return_value.count.return_value = 0
+        self.assertFalse(crawler._site_session_has_visible_password(page))
+
+    def test_public_entrypoints_accept_optional_site_session_resolver(self):
+        resolver = lambda url: None
+        recorder = lambda domain, needs_relogin, session_version: None
+
+        crawler = ProductionNewsCrawler(
+            site_session_resolver=resolver,
+            site_session_status_recorder=recorder,
+        )
+
+        self.assertIs(crawler.site_session_resolver, resolver)
+        self.assertIs(crawler.site_session_status_recorder, recorder)
+        self.assertIn("site_session_resolver", inspect.signature(crawl_and_save).parameters)
+        self.assertIn("site_session_status_recorder", inspect.signature(crawl_and_save).parameters)
+
+    def test_default_policy_allows_saved_session_without_robots_but_keeps_explicit_disable(self):
+        def unexpected_fetch(*args, **kwargs):
+            raise AssertionError("默认授权会话不应把 robots 当前置总开关")
+
+        policy = SourceAccessPolicy(
+            Path("config") / "source_access_rules.json",
+            fetcher=unexpected_fetch,
+        )
+
+        unregistered = policy.check(
+            "https://unregistered-session.example/article/1",
+            access_mode=AUTHORIZED_SESSION_ACCESS_MODE,
+        )
+        explicitly_disabled = policy.check(
+            "https://www.baidu.com/s?wd=test",
+            access_mode=AUTHORIZED_SESSION_ACCESS_MODE,
+        )
+
+        self.assertTrue(unregistered.allowed)
+        self.assertEqual(unregistered.code, "authorized_session_allowed")
+        self.assertFalse(explicitly_disabled.allowed)
+        self.assertEqual(explicitly_disabled.code, "authorized_session_disabled")
 
 
 class DownstreamCompatibilityTests(unittest.TestCase):

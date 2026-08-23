@@ -464,7 +464,7 @@ class SourceAccessPolicy:
                         "Accept": "text/plain,*/*;q=0.1",
                     },
                     timeout=8,
-                    allow_redirects=True,
+                    allow_redirects=False,
                 )
                 status = int(getattr(response, "status_code", 0) or 0)
                 if 200 <= status < 300:

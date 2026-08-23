@@ -3,9 +3,12 @@
 """Playwright-backed social platform browser sessions."""
 
 import html as html_lib
+import hashlib
+import ipaddress
 import json
 import queue
 import re
+import socket
 import threading
 import time
 from concurrent.futures import Future
@@ -13,7 +16,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
-from urllib.parse import parse_qs, quote, urlencode, urljoin, urlparse
+from urllib.parse import parse_qs, quote, urlencode, urljoin, urlparse, urlunparse
 
 from src.sensitive_artifacts import (
     default_sensitive_root,
@@ -364,6 +367,219 @@ def domain_matches(host: str, domains: Tuple[str, ...]) -> bool:
         if normalized == target or normalized.endswith("." + target):
             return True
     return False
+
+
+def _normalize_site_domain(domain: str) -> str:
+    raw = str(domain or "").strip().rstrip(".")
+    if not raw or any(ord(character) < 33 for character in raw):
+        raise ValueError("网站域名无效")
+    if raw.startswith("[") and raw.endswith("]"):
+        raw = raw[1:-1]
+    try:
+        literal = ipaddress.ip_address(raw)
+    except ValueError:
+        try:
+            normalized = raw.encode("idna").decode("ascii").casefold()
+        except UnicodeError as exc:
+            raise ValueError("网站域名无效") from exc
+        labels = normalized.split(".")
+        if (
+            len(normalized) > 253
+            or any(
+                not label
+                or len(label) > 63
+                or not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?", label)
+                for label in labels
+            )
+        ):
+            raise ValueError("网站域名无效")
+        if normalized == "localhost" or normalized.endswith(".localhost"):
+            raise ValueError("不允许使用本机网站地址")
+        return normalized
+    if not literal.is_global:
+        raise ValueError("不允许使用私网或保留地址")
+    return literal.compressed.casefold()
+
+
+def _validate_public_site_dns(domain: str) -> None:
+    try:
+        ipaddress.ip_address(domain)
+        return
+    except ValueError:
+        pass
+    try:
+        records = socket.getaddrinfo(
+            domain,
+            443,
+            type=socket.SOCK_STREAM,
+        )
+    except OSError as exc:
+        raise ValueError("网站域名无法解析为公网地址") from exc
+    addresses = {str(record[4][0]).split("%", 1)[0] for record in records if record[4]}
+    if not addresses:
+        raise ValueError("网站域名无法解析为公网地址")
+    try:
+        parsed_addresses = [ipaddress.ip_address(address) for address in addresses]
+    except ValueError as exc:
+        raise ValueError("网站域名解析结果无效") from exc
+    if any(not address.is_global for address in parsed_addresses):
+        raise ValueError("网站域名解析到私网或保留地址")
+
+
+def normalize_site_url(raw_url: str, *, resolve_dns: bool = True) -> dict:
+    """Normalize one exact HTTPS site and optionally prove all DNS results are public."""
+    value = str(raw_url or "").strip()
+    if not value or len(value) > 2048 or any(ord(character) < 32 for character in value):
+        raise ValueError("网站登录网址无效")
+    try:
+        parsed = urlparse(value)
+        hostname = parsed.hostname
+        port = parsed.port
+    except ValueError as exc:
+        raise ValueError("网站登录网址无效") from exc
+    if parsed.scheme.casefold() != "https" or not hostname:
+        raise ValueError("网站登录网址必须使用 HTTPS")
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError("网站登录网址不得包含账号凭据")
+    if port not in (None, 443):
+        raise ValueError("网站登录网址只允许 HTTPS 默认端口 443")
+    domain = _normalize_site_domain(hostname)
+    if resolve_dns:
+        _validate_public_site_dns(domain)
+    try:
+        ipaddress.IPv6Address(domain)
+        netloc = f"[{domain}]"
+    except ValueError:
+        netloc = domain
+    normalized_url = urlunparse(
+        (
+            "https",
+            netloc,
+            parsed.path or "/",
+            parsed.params,
+            parsed.query,
+            "",
+        )
+    )
+    return {"url": normalized_url, "domain": domain}
+
+
+def _cookie_domain_can_send_to_host(cookie_domain: str, site_domain: str) -> bool:
+    candidate = str(cookie_domain or "").strip().lstrip(".").rstrip(".")
+    if not candidate:
+        return False
+    try:
+        candidate = _normalize_site_domain(candidate)
+    except ValueError:
+        return False
+    try:
+        ipaddress.ip_address(candidate)
+        return candidate == site_domain
+    except ValueError:
+        return site_domain == candidate or site_domain.endswith("." + candidate)
+
+
+def _origin_matches_site(origin: str, site_domain: str) -> bool:
+    try:
+        parsed = urlparse(str(origin or ""))
+        hostname = _normalize_site_domain(parsed.hostname or "")
+        port = parsed.port
+    except (TypeError, ValueError):
+        return False
+    return (
+        parsed.scheme.casefold() == "https"
+        and parsed.username is None
+        and parsed.password is None
+        and port in (None, 443)
+        and hostname == site_domain
+        and parsed.path in ("", "/")
+        and not parsed.params
+        and not parsed.query
+        and not parsed.fragment
+    )
+
+
+def filter_storage_state_for_site(storage_state: dict, domain: str) -> dict:
+    """Keep only credentials the browser can send to one exact HTTPS host."""
+    site_domain = _normalize_site_domain(domain)
+    now = time.time()
+    cookies = []
+    for entry in (storage_state or {}).get("cookies") or []:
+        if not isinstance(entry, dict) or not entry.get("name"):
+            continue
+        expires = entry.get("expires")
+        try:
+            if expires is not None and float(expires) > 0 and float(expires) <= now:
+                continue
+        except (TypeError, ValueError):
+            continue
+        if _cookie_domain_can_send_to_host(entry.get("domain", ""), site_domain):
+            cookie = dict(entry)
+            cookie["domain"] = site_domain
+            cookies.append(cookie)
+    origins = [
+        dict(entry)
+        for entry in (storage_state or {}).get("origins") or []
+        if isinstance(entry, dict)
+        and _origin_matches_site(entry.get("origin", ""), site_domain)
+    ]
+    return {"cookies": cookies, "origins": origins}
+
+
+def _public_http_request_target(url: str) -> Optional[Tuple[str, str]]:
+    """Return one public HTTPS:443 request target; ignore non-network schemes."""
+    value = str(url or "")
+    try:
+        parsed = urlparse(value)
+        hostname = parsed.hostname
+        port = parsed.port
+    except ValueError as exc:
+        raise ValueError("网络请求地址无效") from exc
+    scheme = parsed.scheme.casefold()
+    if scheme not in {"http", "https"}:
+        return None
+    if scheme != "https" or port not in (None, 443):
+        raise ValueError("网络请求只允许 HTTPS 默认端口 443")
+    if not hostname or parsed.username is not None or parsed.password is not None:
+        raise ValueError("网络请求地址无效")
+    domain = _normalize_site_domain(hostname)
+    _validate_public_site_dns(domain)
+    return scheme, domain
+
+
+def _public_websocket_request_target(
+    url: str,
+    *,
+    exact_domain: str = "",
+) -> Tuple[str, str]:
+    """Return one public WSS:443 target, optionally limited to one exact host."""
+    try:
+        parsed = urlparse(str(url or ""))
+        hostname = parsed.hostname
+        port = parsed.port
+    except ValueError as exc:
+        raise ValueError("WebSocket 地址无效") from exc
+    if (
+        parsed.scheme.casefold() != "wss"
+        or port not in (None, 443)
+        or not hostname
+        or parsed.username is not None
+        or parsed.password is not None
+    ):
+        raise ValueError("WebSocket 只允许 WSS 默认端口 443")
+    domain = _normalize_site_domain(hostname)
+    if exact_domain and domain != _normalize_site_domain(exact_domain):
+        raise ValueError("WebSocket 只允许连接保存会话的精确域名")
+    _validate_public_site_dns(domain)
+    return "wss", domain
+
+
+def _site_origin(domain: str) -> str:
+    try:
+        ipaddress.IPv6Address(domain)
+        return f"https://[{domain}]/"
+    except ValueError:
+        return f"https://{domain}/"
 
 
 def cookie_header_from_storage_state(storage_state: dict, domains: Tuple[str, ...]) -> str:
@@ -1261,6 +1477,7 @@ class BrowserSessionManager:
             else default_sensitive_root(self.root)
         )
         self.profile_root = self.sensitive_root / "browser_profiles"
+        self.site_profile_root = self.profile_root / "sites"
         self.legacy_profile_root = self.root / "data" / "browser_profiles"
         self.enforce_acl = bool(enforce_acl)
         self._sessions: Dict[str, dict] = {}
@@ -1268,6 +1485,202 @@ class BrowserSessionManager:
         self._commands: queue.Queue = queue.Queue()
         self._worker_thread: threading.Thread | None = None
         self._worker_guard = threading.Lock()
+
+    def start_site_login(self, login_url: str) -> dict:
+        return self._run_on_worker(self._start_site_login, login_url)
+
+    def _start_site_login(self, login_url: str) -> dict:
+        target = normalize_site_url(login_url)
+        domain = target["domain"]
+        session_key = f"site:{domain}"
+        for existing_key in list(self._sessions):
+            if existing_key.startswith("site:") and existing_key != session_key:
+                self._discard_session(existing_key)
+
+        if session_key in self._sessions:
+            session = self._sessions[session_key]
+            page = session.get("page")
+            try:
+                if page and not page.is_closed():
+                    page.bring_to_front()
+                    page.goto(target["url"], wait_until="domcontentloaded", timeout=30000)
+                    session["login_url"] = target["url"]
+                    return self._site_session_status(
+                        domain,
+                        live=True,
+                        message="网站辅助登录浏览器已打开",
+                    )
+            except Exception:
+                pass
+            self._discard_session(session_key)
+
+        playwright = self._ensure_playwright()
+        browser = None
+        context = None
+        try:
+            browser = playwright.chromium.launch(
+                headless=False,
+                args=["--disable-blink-features=AutomationControlled"],
+            )
+            context = browser.new_context(
+                viewport={"width": 1280, "height": 860},
+                service_workers="block",
+            )
+
+            def guard_public_websocket(websocket):
+                try:
+                    _public_websocket_request_target(websocket.url)
+                    websocket.connect_to_server()
+                except Exception:
+                    websocket.close(code=1008, reason="blocked by site session policy")
+
+            context.route_web_socket("**", guard_public_websocket)
+            page = context.pages[0] if context.pages else context.new_page()
+
+            def guard_public_network(route, request):
+                try:
+                    request_url = getattr(request, "url", "")
+                    is_top_navigation = bool(
+                        request.is_navigation_request()
+                        and request.frame
+                        and request.frame.parent_frame is None
+                    )
+                    if is_top_navigation:
+                        navigation_target = normalize_site_url(request_url)
+                        is_original_page = request.frame == page.main_frame
+                        if (
+                            not is_original_page
+                            and navigation_target["domain"] != domain
+                        ):
+                            raise ValueError("弹窗只能返回原始网站")
+                    else:
+                        _public_http_request_target(request_url)
+                    route.continue_()
+                except Exception:
+                    route.abort("blockedbyclient")
+
+            context.route("**/*", guard_public_network)
+            page.goto(target["url"], wait_until="domcontentloaded", timeout=30000)
+        except Exception:
+            if context:
+                try:
+                    context.close()
+                except Exception:
+                    pass
+            if browser:
+                try:
+                    browser.close()
+                except Exception:
+                    pass
+            if not self._sessions:
+                self._stop_playwright()
+            raise
+
+        self._sessions[session_key] = {
+            "browser": browser,
+            "context": context,
+            "page": page,
+            "domain": domain,
+            "login_url": target["url"],
+            "started_at": time.time(),
+        }
+        return self._site_session_status(
+            domain,
+            live=True,
+            message="网站辅助登录浏览器已打开",
+        )
+
+    def save_site_session(self, domain: str) -> dict:
+        return self._run_on_worker(self._save_site_session, domain)
+
+    def _save_site_session(self, domain: str) -> dict:
+        site_domain = _normalize_site_domain(domain)
+        session_key = f"site:{site_domain}"
+        session = self._sessions.get(session_key)
+        if not session:
+            raise RuntimeError("请先打开该网站的辅助登录浏览器并完成登录")
+        page = session.get("page")
+        if not page or page.is_closed():
+            self._discard_session(session_key)
+            raise RuntimeError("网站辅助登录浏览器已关闭，请重新打开后再保存会话")
+        open_pages = [
+            candidate
+            for candidate in session["context"].pages
+            if not candidate.is_closed()
+        ]
+        if not open_pages:
+            self._discard_session(session_key)
+            raise RuntimeError("网站辅助登录浏览器已关闭，请重新打开后再保存会话")
+        for candidate in open_pages:
+            try:
+                final_target = normalize_site_url(candidate.url, resolve_dns=False)
+            except ValueError as exc:
+                raise RuntimeError("当前页面不是可保存的公网 HTTPS 网站页面") from exc
+            if final_target["domain"] != site_domain:
+                raise RuntimeError("请关闭登录弹窗并返回该网站页面，再保存登录会话")
+
+        storage_state = filter_storage_state_for_site(
+            session["context"].storage_state(),
+            site_domain,
+        )
+        cookie_count = len(storage_state["cookies"])
+        origin_count = len(storage_state["origins"])
+        has_local_storage = any(
+            entry.get("localStorage") for entry in storage_state["origins"]
+        )
+        if not cookie_count and not has_local_storage:
+            raise RuntimeError("未读取到该网站的 Cookie 或 LocalStorage，请确认登录完成")
+        result = {
+            "domain": site_domain,
+            "login_url": _site_origin(site_domain),
+            "storage_state": storage_state,
+            "cookie_count": cookie_count,
+            "origin_count": origin_count,
+            "has_local_storage": has_local_storage,
+            "saved_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "live": False,
+            "message": "网站浏览器会话已读取并关闭，等待加密保存",
+            "storage_scope": "current_user_private",
+        }
+        self._discard_session(session_key)
+        return result
+
+    def close_site_session(self, domain: str) -> dict:
+        return self._run_on_worker(self._close_site_session, domain)
+
+    def _close_site_session(self, domain: str) -> dict:
+        site_domain = _normalize_site_domain(domain)
+        session_key = f"site:{site_domain}"
+        if session_key not in self._sessions:
+            return self._site_session_status(
+                site_domain,
+                live=False,
+                message="网站辅助登录浏览器未打开",
+            )
+        self._discard_session(session_key)
+        return self._site_session_status(
+            site_domain,
+            live=False,
+            message="网站辅助登录浏览器已关闭",
+        )
+
+    def clear_site_data(self, domain: str) -> dict:
+        return self._run_on_worker(self._clear_site_data, domain)
+
+    def _clear_site_data(self, domain: str) -> dict:
+        site_domain = _normalize_site_domain(domain)
+        self._discard_session(f"site:{site_domain}")
+        profile_dir = self.site_profile_root / hashlib.sha256(
+            site_domain.encode("utf-8")
+        ).hexdigest()
+        removed = int(safe_remove_tree(profile_dir, self.site_profile_root))
+        return {
+            "domain": site_domain,
+            "profile_trees_removed": removed,
+            "live": False,
+            "message": "网站辅助登录会话已清除",
+            "storage_scope": "current_user_private",
+        }
 
     def start_login(self, platform: str) -> dict:
         return self._run_on_worker(self._start_login, platform)
@@ -1641,7 +2054,8 @@ class BrowserSessionManager:
 
     def _clear_all_data(self) -> dict:
         for platform in list(self._sessions):
-            self._discard_session(platform)
+            if not platform.startswith("site:"):
+                self._discard_session(platform)
         removed = 0
         slugs = {adapter.slug for adapter in SOCIAL_PLATFORM_ADAPTERS.values()}
         for root in (self.profile_root, self.legacy_profile_root):
@@ -1664,6 +2078,13 @@ class BrowserSessionManager:
                 context.close()
         except Exception:
             pass
+        try:
+            browser = session.get("browser")
+            if browser:
+                browser.close()
+        except Exception:
+            pass
+
     def status(self) -> dict:
         return self._run_on_worker(self._status)
 
@@ -1671,6 +2092,7 @@ class BrowserSessionManager:
         return {
             platform: self._session_status(platform, live=True, message="辅助登录浏览器运行中")
             for platform in self._sessions
+            if not platform.startswith("site:")
         }
 
     def shutdown(self):
@@ -1740,6 +2162,16 @@ class BrowserSessionManager:
     def _session_status(self, platform: str, live: bool, message: str) -> dict:
         return {
             "platform": platform,
+            "live": live,
+            "message": message,
+            "storage_scope": "current_user_private",
+        }
+
+    @staticmethod
+    def _site_session_status(domain: str, live: bool, message: str) -> dict:
+        return {
+            "domain": domain,
+            "login_url": _site_origin(domain),
             "live": live,
             "message": message,
             "storage_scope": "current_user_private",

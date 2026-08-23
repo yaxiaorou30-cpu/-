@@ -105,6 +105,35 @@ class SourceAccessPolicyTests(unittest.TestCase):
             "robots_unreachable",
         )
 
+    def test_robots_redirects_are_never_followed_automatically(self):
+        self.write_registry()
+        redirect_targets = (
+            "http://127.0.0.1/private",
+            "https://private.internal/robots.txt",
+            "https://other.example/robots.txt",
+        )
+
+        for location in redirect_targets:
+            with self.subTest(location=location):
+                calls = []
+
+                def fetcher(url, **kwargs):
+                    calls.append((url, kwargs))
+                    return FakeResponse(
+                        302,
+                        b"",
+                        url,
+                        {"Location": location},
+                    )
+
+                policy = SourceAccessPolicy(self.registry_path, fetcher=fetcher)
+                decision = policy.check("https://example.com/public")
+
+                self.assertFalse(decision.allowed)
+                self.assertEqual(decision.code, "robots_unreachable")
+                self.assertEqual(len(calls), 1)
+                self.assertFalse(calls[0][1]["allow_redirects"])
+
     def test_disabled_platform_and_private_target_stop_before_fetch(self):
         source = {
             "id": "SRC-DOUYIN",
@@ -175,6 +204,92 @@ class SourceAccessPolicyTests(unittest.TestCase):
         self.assertTrue(external.allowed)
         self.assertEqual(external.code, "external_adapter_allowed")
         self.assertEqual(len(calls), 1)
+
+    def test_authorized_session_robots_default_follows_source_robots_requirement(self):
+        source = {
+            "id": "SRC-SAVED-SESSION",
+            "name": "已保存网站会话",
+            "domains": ["example.com"],
+            "access_type": "A1",
+            "support_level": "S2",
+            "automation_enabled": True,
+            "robots_required": True,
+            "platform_rule_status": "test",
+        }
+        self.write_registry(sources=[source])
+        calls = []
+
+        def fetcher(url, **kwargs):
+            calls.append(url)
+            return FakeResponse(200, b"User-agent: *\nDisallow: /\n", url)
+
+        policy = SourceAccessPolicy(self.registry_path, fetcher=fetcher)
+
+        decision = policy.check(
+            "https://example.com/member/article",
+            access_mode=AUTHORIZED_SESSION_ACCESS_MODE,
+        )
+
+        self.assertFalse(decision.allowed)
+        self.assertEqual(decision.code, "robots_disallowed")
+        self.assertEqual(len(calls), 1)
+
+    def test_authorized_session_explicit_robots_requirement_is_respected(self):
+        source = {
+            "id": "SRC-ROBOTS-SESSION",
+            "name": "显式检查 robots 的授权会话",
+            "domains": ["example.com"],
+            "access_type": "A1",
+            "support_level": "S2",
+            "automation_enabled": True,
+            "robots_required": False,
+            "authorized_session_enabled": True,
+            "authorized_session_robots_required": True,
+            "platform_rule_status": "test",
+        }
+        self.write_registry(sources=[source])
+        calls = []
+
+        def fetcher(url, **kwargs):
+            calls.append(url)
+            return FakeResponse(200, b"User-agent: *\nDisallow: /\n", url)
+
+        policy = SourceAccessPolicy(self.registry_path, fetcher=fetcher)
+        decision = policy.check(
+            "https://example.com/member/article",
+            access_mode=AUTHORIZED_SESSION_ACCESS_MODE,
+        )
+
+        self.assertFalse(decision.allowed)
+        self.assertEqual(decision.code, "robots_disallowed")
+        self.assertEqual(len(calls), 1)
+
+    def test_authorized_session_explicit_disable_still_blocks(self):
+        source = {
+            "id": "SRC-DISABLED-SESSION",
+            "name": "禁用授权会话",
+            "domains": ["example.com"],
+            "access_type": "A1",
+            "support_level": "S0",
+            "automation_enabled": True,
+            "robots_required": False,
+            "authorized_session_enabled": False,
+            "authorized_session_robots_required": False,
+            "platform_rule_status": "stopped",
+        }
+        self.write_registry(sources=[source])
+        policy = SourceAccessPolicy(
+            self.registry_path,
+            fetcher=lambda *args, **kwargs: self.fail("显式禁用后不应请求 robots.txt"),
+        )
+
+        decision = policy.check(
+            "https://example.com/member/article",
+            access_mode=AUTHORIZED_SESSION_ACCESS_MODE,
+        )
+
+        self.assertFalse(decision.allowed)
+        self.assertEqual(decision.code, "authorized_session_disabled")
 
     def test_audit_excludes_query_and_full_path(self):
         self.write_registry()
