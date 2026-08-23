@@ -11,6 +11,14 @@ const els = {
   collectLevel: document.getElementById("collectLevel"),
   stableSources: document.getElementById("stableSources"),
   socialPlatforms: document.getElementById("socialPlatforms"),
+  siteSessionCard: document.getElementById("siteSessionCard"),
+  siteLoginUrl: document.getElementById("siteLoginUrl"),
+  siteSessionBadge: document.getElementById("siteSessionBadge"),
+  siteSessionStatus: document.getElementById("siteSessionStatus"),
+  openSiteLoginBtn: document.getElementById("openSiteLoginBtn"),
+  saveSiteSessionBtn: document.getElementById("saveSiteSessionBtn"),
+  closeSiteLoginBtn: document.getElementById("closeSiteLoginBtn"),
+  clearSiteSessionBtn: document.getElementById("clearSiteSessionBtn"),
   accountGrid: document.getElementById("accountGrid"),
   toggleAccounts: document.getElementById("toggleAccounts"),
   testAllAccountsBtn: document.getElementById("testAllAccountsBtn"),
@@ -148,6 +156,7 @@ const state = {
   selectedMonitorId: null,
   monitorPoll: null,
   savedAccounts: {},
+  siteSessions: {},
   reportDraft: null,
   aiDisclosure: null,
   aiDraft: null,
@@ -561,9 +570,135 @@ function renderAccounts(platforms, savedAccounts = {}) {
 
 function updateAccountSummary(accounts = state.savedAccounts) {
   if (!els.navAccountCount) return;
-  els.navAccountCount.textContent = String(
-    Object.values(accounts).filter((account) => account && account.saved).length,
-  );
+  const socialCount = Object.values(accounts).filter((account) => account && account.saved).length;
+  const siteCount = Object.values(state.siteSessions).filter((session) => session && session.saved).length;
+  els.navAccountCount.textContent = String(socialCount + siteCount);
+}
+
+function normalizedSiteDomain(value) {
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol !== "https:") return "";
+    return parsed.hostname.toLowerCase().replace(/\.$/, "");
+  } catch (_) {
+    return "";
+  }
+}
+
+function renderSiteSessionStatus(preferredDomain = "") {
+  if (!els.siteSessionStatus) return;
+  const domain = preferredDomain || normalizedSiteDomain(els.siteLoginUrl.value.trim());
+  const saved = domain ? state.siteSessions[domain] || {} : {};
+  const isSaved = !!saved.saved;
+  const needsRelogin = saved.needs_relogin === true;
+  els.siteSessionBadge.textContent = needsRelogin ? "需要重新登录" : (isSaved ? "已保存" : "未保存");
+  els.siteSessionBadge.classList.toggle("saved", isSaved && !needsRelogin);
+  els.siteSessionBadge.classList.toggle("needs-login", needsRelogin);
+  if (needsRelogin) {
+    els.siteSessionStatus.textContent = `${domain}：保存的会话已经失效，需要重新打开辅助登录并保存新会话。`;
+  } else if (isSaved) {
+    const evidence = [
+      saved.browser_cookie_count ? `${saved.browser_cookie_count} 个 Cookie` : "",
+      saved.browser_has_local_storage ? "含网页本地会话" : "",
+    ].filter(Boolean).join("，");
+    els.siteSessionStatus.textContent = `${domain}：会话已加密保存${evidence ? `（${evidence}）` : ""}。同一域名再次保存会覆盖原会话。`;
+  } else if (domain) {
+    els.siteSessionStatus.textContent = `${domain}：尚未保存会话。同一域名再次保存会覆盖原会话。`;
+  } else {
+    els.siteSessionStatus.textContent = "填写网站登录页地址；同一域名再次保存会覆盖原会话。";
+  }
+  updateAccountSummary();
+}
+
+function requiredSiteUrl() {
+  const siteUrl = els.siteLoginUrl.value.trim();
+  els.siteLoginUrl.setCustomValidity("");
+  if (!siteUrl || !els.siteLoginUrl.checkValidity() || !normalizedSiteDomain(siteUrl)) {
+    els.siteLoginUrl.setCustomValidity("请输入完整的 HTTPS 网站登录页地址");
+    els.siteLoginUrl.reportValidity();
+    return "";
+  }
+  return siteUrl;
+}
+
+function applySiteSessionResponse(result, siteUrl) {
+  state.siteSessions = result.site_sessions || state.siteSessions;
+  const domain = result.saved?.domain || result.session?.domain || normalizedSiteDomain(siteUrl);
+  renderSiteSessionStatus(domain);
+}
+
+async function openSiteLogin() {
+  const siteUrl = requiredSiteUrl();
+  if (!siteUrl) return;
+  els.openSiteLoginBtn.disabled = true;
+  try {
+    const result = await requestJson("/api/browser-login/start", {
+      method: "POST",
+      body: JSON.stringify({ site_url: siteUrl }),
+    });
+    applySiteSessionResponse(result, siteUrl);
+    addSourceLog(`${normalizedSiteDomain(siteUrl)}: 辅助登录浏览器已打开，请人工完成登录后保存会话`, "success");
+  } catch (error) {
+    addSourceLog(`网站辅助登录打开失败：${error.message}`, "error");
+  } finally {
+    els.openSiteLoginBtn.disabled = false;
+  }
+}
+
+async function saveSiteSession() {
+  const siteUrl = requiredSiteUrl();
+  if (!siteUrl) return;
+  els.saveSiteSessionBtn.disabled = true;
+  els.saveSiteSessionBtn.textContent = "保存中";
+  try {
+    const result = await requestJson("/api/browser-login/save", {
+      method: "POST",
+      body: JSON.stringify({ site_url: siteUrl }),
+    });
+    applySiteSessionResponse(result, siteUrl);
+    addSourceLog(`${normalizedSiteDomain(siteUrl)}: 登录会话已加密保存，同域名旧会话已覆盖`, "success");
+  } catch (error) {
+    addSourceLog(`网站会话保存失败：${error.message}`, "error");
+  } finally {
+    els.saveSiteSessionBtn.disabled = false;
+    els.saveSiteSessionBtn.textContent = "保存会话";
+  }
+}
+
+async function closeSiteLogin() {
+  const siteUrl = requiredSiteUrl();
+  if (!siteUrl) return;
+  els.closeSiteLoginBtn.disabled = true;
+  try {
+    const result = await requestJson("/api/browser-login/close", {
+      method: "POST",
+      body: JSON.stringify({ site_url: siteUrl }),
+    });
+    applySiteSessionResponse(result, siteUrl);
+    addSourceLog(`${normalizedSiteDomain(siteUrl)}: ${result.message || "辅助登录浏览器已关闭"}`, "success");
+  } catch (error) {
+    addSourceLog(`网站辅助登录窗口关闭失败：${error.message}`, "error");
+  } finally {
+    els.closeSiteLoginBtn.disabled = false;
+  }
+}
+
+async function clearSiteSession() {
+  const siteUrl = requiredSiteUrl();
+  if (!siteUrl) return;
+  els.clearSiteSessionBtn.disabled = true;
+  try {
+    const result = await requestJson("/api/accounts/clear", {
+      method: "POST",
+      body: JSON.stringify({ site_url: siteUrl }),
+    });
+    applySiteSessionResponse(result, siteUrl);
+    addSourceLog(`${normalizedSiteDomain(siteUrl)}: 登录会话已清除`, "success");
+  } catch (error) {
+    addSourceLog(`网站会话清除失败：${error.message}`, "error");
+  } finally {
+    els.clearSiteSessionBtn.disabled = false;
+  }
 }
 
 function updateAccountCardStatus(card, saved = {}) {
@@ -2242,6 +2377,10 @@ async function loadOptions() {
   const options = await requestJson("/api/options");
   state.options = options;
   state.savedAccounts = options.saved_accounts || {};
+  state.siteSessions = options.site_sessions || {};
+  if (!els.siteLoginUrl.value && Object.keys(state.siteSessions).length === 1) {
+    els.siteLoginUrl.value = Object.values(state.siteSessions)[0].site_url || "";
+  }
   fillSelect(els.timeRange, options.time_ranges || [], "近一周");
   updateCustomDateRange();
   fillSelect(
@@ -2257,6 +2396,7 @@ async function loadOptions() {
   renderChecks(els.stableSources, options.stable_sources || [], (options.stable_sources || []).length);
   renderChecks(els.socialPlatforms, options.social_platforms || [], 5);
   renderAccounts(options.social_platforms || [], state.savedAccounts);
+  renderSiteSessionStatus();
   els.complianceNotice.textContent = options.compliance_notice || els.complianceNotice.textContent;
   updateSelectButtons();
   renderLatest(options.latest);
@@ -2311,6 +2451,11 @@ function startTaskPolling(taskId) {
         clearInterval(state.taskPoll);
         state.taskPoll = null;
         setBusy(false);
+        try {
+          await refreshAccountStatuses();
+        } catch (error) {
+          addSourceLog(`网站会话状态刷新失败：${error.message}`, "warning");
+        }
         const isSourceAcceptance = Boolean(result.task.payload?.source_acceptance);
         if (result.task.status === "done") {
           if (isSourceAcceptance) {
@@ -2371,7 +2516,9 @@ function renderTask(task) {
 async function refreshAccountStatuses() {
   const result = await requestJson("/api/accounts");
   state.savedAccounts = result.accounts || {};
+  state.siteSessions = result.site_sessions || {};
   renderAccounts((state.options || {}).social_platforms || [], state.savedAccounts);
+  renderSiteSessionStatus();
   return state.savedAccounts;
 }
 
@@ -3088,8 +3235,17 @@ els.monitorDetail.addEventListener("click", (event) => {
 
 els.toggleAccounts.addEventListener("click", () => {
   const hidden = els.accountGrid.classList.toggle("hidden");
+  els.siteSessionCard.classList.toggle("hidden", hidden);
   els.toggleAccounts.textContent = hidden ? "展开" : "收起";
 });
+els.siteLoginUrl.addEventListener("input", () => {
+  els.siteLoginUrl.setCustomValidity("");
+  renderSiteSessionStatus();
+});
+els.openSiteLoginBtn.addEventListener("click", openSiteLogin);
+els.saveSiteSessionBtn.addEventListener("click", saveSiteSession);
+els.closeSiteLoginBtn.addEventListener("click", closeSiteLogin);
+els.clearSiteSessionBtn.addEventListener("click", clearSiteSession);
 els.testAllAccountsBtn.addEventListener("click", testAllAccounts);
 els.clearSourceLogBtn.addEventListener("click", clearSourceLog);
 els.toggleHistoryBtn.addEventListener("click", toggleTaskHistory);

@@ -1,5 +1,8 @@
 import unittest
-from unittest.mock import patch
+import time
+from concurrent.futures import ThreadPoolExecutor
+from threading import Event
+from unittest.mock import MagicMock, patch
 
 import web_app
 
@@ -469,6 +472,651 @@ class WebAccountStoreTests(unittest.TestCase):
         self.assertTrue(status["browser_cookie_saved"])
         self.assertTrue(status["browser_login_confirmed"])
         self.assertNotIn(secret_cookie, str(status))
+
+    def test_site_session_save_filters_encrypts_and_overwrites_exact_domain(self):
+        normalized = {"url": "https://example.com/login", "domain": "example.com"}
+        first_state = {
+            "cookies": [
+                {"name": "sid", "value": "first-secret", "domain": ".example.com"},
+                {"name": "sub", "value": "subdomain-secret", "domain": ".login.example.com"},
+                {"name": "tracker", "value": "tracker-secret", "domain": ".tracker.test"},
+            ],
+            "origins": [
+                {"origin": "https://example.com", "localStorage": [{"name": "token", "value": "first-local"}]},
+                {"origin": "https://login.example.com", "localStorage": [{"name": "token", "value": "sub-local"}]},
+                {"origin": "https://tracker.test", "localStorage": [{"name": "token", "value": "tracker-local"}]},
+            ],
+        }
+        second_state = {
+            "cookies": [
+                {"name": "sid", "value": "second-secret", "domain": "example.com"},
+                {"name": "tracker", "value": "second-tracker", "domain": "tracker.test"},
+            ],
+            "origins": [
+                {"origin": "https://example.com", "localStorage": [{"name": "token", "value": "second-local"}]},
+            ],
+        }
+
+        with patch.object(web_app, "normalize_site_url", return_value=normalized):
+            web_app.save_site_browser_session(
+                normalized["url"],
+                {"storage_state": first_state, "saved_at": "2026-08-23T10:00:00"},
+            )
+            web_app.save_site_browser_session(
+                normalized["url"],
+                {"storage_state": second_state, "saved_at": "2026-08-23T10:05:00"},
+            )
+            resolved = web_app.resolve_saved_site_session("https://example.com/private")
+
+        self.assertEqual(list(self.store["sites"]), ["example.com"])
+        self.assertNotIn("browser_cookie", self.store["sites"]["example.com"])
+        self.assertNotIn("first-secret", str(self.store))
+        self.assertNotIn("second-secret", str(self.store))
+        self.assertEqual(resolved["domain"], "example.com")
+        self.assertEqual(set(resolved), {"domain", "storage_state", "session_version"})
+        self.assertTrue(resolved["session_version"])
+        self.assertEqual(
+            resolved["storage_state"],
+            {
+                "cookies": [{"name": "sid", "value": "second-secret", "domain": "example.com"}],
+                "origins": [
+                    {
+                        "origin": "https://example.com",
+                        "localStorage": [{"name": "token", "value": "second-local"}],
+                    }
+                ],
+            },
+        )
+
+    def test_site_session_status_hides_secrets_and_resolver_matches_exact_hostname(self):
+        normalized = {
+            "url": "https://example.com/login?token=url-secret#callback",
+            "domain": "example.com",
+        }
+        storage_state = {
+            "cookies": [{"name": "sid", "value": "site-cookie-secret", "domain": ".example.com"}],
+            "origins": [
+                {
+                    "origin": "https://example.com",
+                    "localStorage": [{"name": "token", "value": "site-storage-secret"}],
+                }
+            ],
+        }
+        with patch.object(web_app, "normalize_site_url", return_value=normalized):
+            web_app.save_site_browser_session(
+                normalized["url"],
+                {"storage_state": storage_state, "saved_at": "2026-08-23T10:00:00"},
+            )
+
+        statuses = web_app.build_saved_site_session_statuses()
+        self.assertTrue(statuses["example.com"]["saved"])
+        self.assertEqual(statuses["example.com"]["site_url"], "https://example.com/")
+        self.assertNotIn("url-secret", str(self.store))
+        self.assertNotIn("url-secret", str(statuses))
+        self.assertNotIn("site-cookie-secret", str(statuses))
+        self.assertNotIn("site-storage-secret", str(statuses))
+
+        with patch.object(
+            web_app,
+            "normalize_site_url",
+            return_value={"url": "https://www.example.com/", "domain": "www.example.com"},
+        ):
+            self.assertIsNone(web_app.resolve_saved_site_session("https://www.example.com/"))
+
+    def test_site_session_status_records_only_safe_relogin_metadata(self):
+        normalized = {"url": "https://example.com/", "domain": "example.com"}
+        storage_state = {
+            "cookies": [
+                {"name": "sid", "value": "relogin-cookie-secret", "domain": "example.com"}
+            ],
+            "origins": [],
+        }
+        with patch.object(web_app, "normalize_site_url", return_value=normalized):
+            web_app.save_site_browser_session(
+                normalized["url"],
+                {"storage_state": storage_state, "saved_at": "2026-08-23T10:00:00"},
+            )
+            session_version = self.store["sites"]["example.com"]["session_version"]
+            web_app.record_site_session_status(
+                "example.com",
+                True,
+                session_version,
+            )
+
+        status = web_app.build_saved_site_session_statuses()["example.com"]
+        self.assertTrue(status["needs_relogin"])
+        self.assertTrue(status["session_checked_at"])
+        self.assertNotIn("relogin-cookie-secret", str(status))
+
+        with patch.object(web_app, "normalize_site_url", return_value=normalized):
+            web_app.record_site_session_status(
+                "example.com",
+                False,
+                session_version,
+            )
+        self.assertFalse(
+            web_app.build_saved_site_session_statuses()["example.com"]["needs_relogin"]
+        )
+
+    def test_site_session_status_recorder_never_recreates_a_cleared_site(self):
+        normalized = {"url": "https://example.com/", "domain": "example.com"}
+        self.store["sites"] = {}
+        with patch.object(web_app, "normalize_site_url", return_value=normalized):
+            recorded = web_app.record_site_session_status(
+                "example.com",
+                True,
+                "cleared-session",
+            )
+
+        self.assertFalse(recorded)
+        self.assertEqual(self.store["sites"], {})
+
+    def test_invalid_or_expired_site_session_is_marked_for_relogin(self):
+        normalized = {"url": "https://example.com/", "domain": "example.com"}
+        invalid_payloads = (
+            web_app.encrypt_secret("{not-json"),
+            web_app.encrypt_secret(web_app.json.dumps(
+                {
+                    "cookies": [
+                        {
+                            "name": "sid",
+                            "value": "expired-secret",
+                            "domain": "example.com",
+                            "expires": time.time() - 60,
+                        }
+                    ],
+                    "origins": [],
+                }
+            )),
+            "not-an-encrypted-payload",
+        )
+
+        for encrypted_payload in invalid_payloads:
+            with self.subTest(payload_type=type(encrypted_payload).__name__):
+                self.store["sites"] = {
+                    "example.com": {
+                        "domain": "example.com",
+                        "browser_session": encrypted_payload,
+                        "session_version": "old-session",
+                        "needs_relogin": False,
+                    }
+                }
+                with patch.object(web_app, "normalize_site_url", return_value=normalized):
+                    resolved = web_app.resolve_saved_site_session(normalized["url"])
+
+                self.assertIsNone(resolved)
+                self.assertTrue(self.store["sites"]["example.com"]["needs_relogin"])
+                self.assertTrue(
+                    self.store["sites"]["example.com"]["session_checked_at"]
+                )
+                status = web_app.build_saved_site_session_statuses()["example.com"]
+                self.assertTrue(status["needs_relogin"])
+                self.assertNotIn("expired-secret", str(status))
+
+    def test_stale_site_session_status_cannot_overwrite_new_session(self):
+        normalized = {"url": "https://example.com/", "domain": "example.com"}
+
+        def save(value):
+            web_app.save_site_browser_session(
+                normalized["url"],
+                {
+                    "storage_state": {
+                        "cookies": [
+                            {
+                                "name": "sid",
+                                "value": value,
+                                "domain": "example.com",
+                            }
+                        ],
+                        "origins": [],
+                    }
+                },
+            )
+
+        with patch.object(web_app, "normalize_site_url", return_value=normalized):
+            save("first-secret")
+            old_session = web_app.resolve_saved_site_session(normalized["url"])
+            save("second-secret")
+            new_session = web_app.resolve_saved_site_session(normalized["url"])
+            stale_recorded = web_app.record_site_session_status(
+                "example.com",
+                True,
+                old_session["session_version"],
+            )
+            self.assertFalse(
+                self.store["sites"]["example.com"]["needs_relogin"]
+            )
+            self.assertEqual(
+                self.store["sites"]["example.com"]["session_checked_at"],
+                "",
+            )
+            current_recorded = web_app.record_site_session_status(
+                "example.com",
+                True,
+                new_session["session_version"],
+            )
+
+        self.assertNotEqual(
+            old_session["session_version"],
+            new_session["session_version"],
+        )
+        self.assertFalse(stale_recorded)
+        self.assertTrue(current_recorded)
+        self.assertTrue(self.store["sites"]["example.com"]["needs_relogin"])
+
+    def test_site_session_concurrent_saves_do_not_lose_another_domain(self):
+        holder = {"value": {"version": 1, "platforms": {}, "sites": {}}}
+
+        def read_copy():
+            return web_app.json.loads(web_app.json.dumps(holder["value"]))
+
+        def write_copy(store):
+            time.sleep(0.02)
+            holder["value"] = web_app.json.loads(web_app.json.dumps(store))
+
+        def normalize(raw_url, *, resolve_dns=True):
+            domain = raw_url.split("//", 1)[1].split("/", 1)[0].lower()
+            return {"url": f"https://{domain}/", "domain": domain}
+
+        def save(domain):
+            web_app.save_site_browser_session(
+                f"https://{domain}/",
+                {
+                    "storage_state": {
+                        "cookies": [{"name": "sid", "value": domain, "domain": domain}],
+                        "origins": [],
+                    }
+                },
+            )
+
+        with patch.object(web_app, "read_account_store", side_effect=read_copy), \
+             patch.object(web_app, "write_account_store", side_effect=write_copy), \
+             patch.object(web_app, "normalize_site_url", side_effect=normalize):
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                futures = [
+                    executor.submit(save, "one.example"),
+                    executor.submit(save, "two.example"),
+                ]
+                for future in futures:
+                    future.result()
+
+        self.assertEqual(set(holder["value"]["sites"]), {"one.example", "two.example"})
+
+    def test_account_store_atomic_replace_failure_preserves_existing_file(self):
+        self.write_patch.stop()
+        try:
+            parent = MagicMock()
+            temporary = MagicMock()
+            handle = MagicMock()
+            handle.__enter__.return_value = handle
+            handle.fileno.return_value = 1
+            temporary.open.return_value = handle
+            target = MagicMock()
+            target.name = "accounts.json"
+            target.parent = parent
+            target.with_name.return_value = temporary
+
+            with patch.object(web_app, "ACCOUNT_STORE_FILE", target), \
+                 patch.object(web_app.os, "fsync"), \
+                 patch.object(web_app.os, "replace", side_effect=OSError("replace failed")) as replace:
+                with self.assertRaisesRegex(OSError, "replace failed"):
+                    web_app.write_account_store({"sentinel": "new"})
+
+            target.open.assert_not_called()
+            temporary.open.assert_called_once_with("w", encoding="utf-8")
+            replace.assert_called_once_with(temporary, target)
+            temporary.unlink.assert_called_once_with(missing_ok=True)
+        finally:
+            self.write_patch.start()
+
+    def test_site_browser_login_api_uses_site_url_and_rejects_ambiguous_target(self):
+        class FakeBrowserManager:
+            def __init__(self):
+                self.started = []
+
+            def start_site_login(self, site_url):
+                self.started.append(site_url)
+                return {
+                    "domain": "example.com",
+                    "login_url": site_url,
+                    "live": True,
+                    "storage_scope": "current_user_private",
+                }
+
+        class DummyHandler:
+            def __init__(self, payload):
+                self.payload = payload
+                self.response = None
+                self.status = None
+
+            def read_body_json(self):
+                return self.payload
+
+            def send_json(self, payload, status=200):
+                self.response = payload
+                self.status = status
+
+        manager = FakeBrowserManager()
+        normalized = {"url": "https://example.com/", "domain": "example.com"}
+        handler = DummyHandler({"site_url": "https://example.com"})
+        with patch.object(web_app, "BROWSER_SESSION_MANAGER", manager), \
+             patch.object(web_app, "normalize_site_url", return_value=normalized):
+            web_app.WebUIHandler.handle_browser_login_start(handler)
+
+        self.assertEqual(handler.status, 200)
+        self.assertEqual(manager.started, ["https://example.com/"])
+        self.assertEqual(handler.response["session"]["domain"], "example.com")
+        self.assertIn("site_sessions", handler.response)
+
+        for payload in ({}, {"platform": self.platform, "site_url": "https://example.com"}):
+            with self.subTest(payload=payload):
+                invalid = DummyHandler(payload)
+                web_app.WebUIHandler.handle_browser_login_start(invalid)
+                self.assertEqual(invalid.status, 400)
+                self.assertFalse(invalid.response["ok"])
+
+    def test_site_browser_save_and_close_api_use_exact_domain_without_exposing_state(self):
+        class FakeBrowserManager:
+            def __init__(self):
+                self.saved = []
+                self.closed = []
+
+            def save_site_session(self, domain):
+                self.saved.append(domain)
+                return {
+                    "domain": domain,
+                    "storage_state": {
+                        "cookies": [
+                            {"name": "sid", "value": "api-site-secret", "domain": ".example.com"},
+                            {"name": "tracker", "value": "drop-secret", "domain": ".tracker.test"},
+                        ],
+                        "origins": [],
+                    },
+                    "cookie_count": 1,
+                    "origin_count": 0,
+                    "has_local_storage": False,
+                    "saved_at": "2026-08-23T10:00:00",
+                }
+
+            def close_site_session(self, domain):
+                self.closed.append(domain)
+                return {"domain": domain, "live": False, "message": "closed"}
+
+        class DummyHandler:
+            def __init__(self, payload):
+                self.payload = payload
+                self.response = None
+                self.status = None
+
+            def read_body_json(self):
+                return self.payload
+
+            def send_json(self, payload, status=200):
+                self.response = payload
+                self.status = status
+
+        manager = FakeBrowserManager()
+        normalized = {"url": "https://example.com/", "domain": "example.com"}
+        saved = DummyHandler({"site_url": "https://example.com"})
+        with patch.object(web_app, "BROWSER_SESSION_MANAGER", manager), \
+             patch.object(web_app, "normalize_site_url", return_value=normalized):
+            web_app.WebUIHandler.handle_browser_login_save(saved)
+
+        self.assertEqual(saved.status, 200)
+        self.assertEqual(manager.saved, ["example.com"])
+        self.assertNotIn("api-site-secret", str(saved.response))
+        self.assertNotIn("drop-secret", str(saved.response))
+        self.assertNotIn("api-site-secret", str(self.store))
+        self.assertNotIn("drop-secret", str(self.store))
+        self.assertEqual(saved.response["saved"]["domain"], "example.com")
+
+        closed = DummyHandler({"site_url": "https://example.com"})
+        with patch.object(web_app, "BROWSER_SESSION_MANAGER", manager), \
+             patch.object(web_app, "normalize_site_url", return_value=normalized):
+            web_app.WebUIHandler.handle_browser_login_close(closed)
+
+        self.assertEqual(closed.status, 200)
+        self.assertEqual(manager.closed, ["example.com"])
+        self.assertTrue(closed.response["site_sessions"]["example.com"]["saved"])
+
+    def test_site_clear_deletes_ciphertext_only_after_browser_profile_cleanup(self):
+        class DummyHandler:
+            def __init__(self, payload):
+                self.payload = payload
+                self.response = None
+                self.status = None
+
+            def read_body_json(self):
+                return self.payload
+
+            def send_json(self, payload, status=200):
+                self.response = payload
+                self.status = status
+
+        normalized = {"url": "https://example.com/", "domain": "example.com"}
+        self.store["sites"] = {
+            "example.com": {"browser_session": web_app.encrypt_secret('{"cookies": []}')},
+            "other.example": {"browser_session": web_app.encrypt_secret('{"cookies": []}')},
+        }
+        self.store["platforms"][self.platform] = {
+            "cookie": web_app.encrypt_secret("social-secret"),
+        }
+
+        class SuccessfulBrowserManager:
+            def clear_site_data(manager_self, domain):
+                self.assertIn(domain, self.store["sites"])
+                return {"domain": domain, "profile_trees_removed": 1, "live": False}
+
+        handler = DummyHandler({"site_url": "https://example.com"})
+        with patch.object(web_app, "BROWSER_SESSION_MANAGER", SuccessfulBrowserManager()), \
+             patch.object(web_app, "normalize_site_url", return_value=normalized):
+            web_app.WebUIHandler.handle_account_clear(handler)
+
+        self.assertEqual(handler.status, 200)
+        self.assertNotIn("example.com", self.store["sites"])
+        self.assertIn("other.example", self.store["sites"])
+        self.assertIn(self.platform, self.store["platforms"])
+
+        self.store["sites"]["example.com"] = {
+            "browser_session": web_app.encrypt_secret('{"cookies": []}')
+        }
+
+        class FailingBrowserManager:
+            def clear_site_data(self, domain):
+                raise RuntimeError("profile cleanup failed")
+
+        failed = DummyHandler({"site_url": "https://example.com"})
+        with patch.object(web_app, "BROWSER_SESSION_MANAGER", FailingBrowserManager()), \
+             patch.object(web_app, "normalize_site_url", return_value=normalized):
+            web_app.WebUIHandler.handle_account_clear(failed)
+
+        self.assertEqual(failed.status, 500)
+        self.assertIn("example.com", self.store["sites"])
+
+    def test_site_save_and_clear_are_one_linearized_authorization_transaction(self):
+        normalized = {"url": "https://example.com/", "domain": "example.com"}
+        save_entered = Event()
+        release_save = Event()
+        clear_attempted = Event()
+        clear_entered = Event()
+
+        class RacingBrowserManager:
+            def save_site_session(self, domain):
+                save_entered.set()
+                if not release_save.wait(timeout=2):
+                    raise RuntimeError("test did not release save")
+                return {
+                    "domain": domain,
+                    "storage_state": {
+                        "cookies": [{"name": "sid", "value": "race-secret", "domain": domain}],
+                        "origins": [],
+                    },
+                    "cookie_count": 1,
+                    "origin_count": 0,
+                    "has_local_storage": False,
+                }
+
+            def clear_site_data(self, domain):
+                clear_entered.set()
+                return {"domain": domain, "profile_trees_removed": 1, "live": False}
+
+        class DummyHandler:
+            def __init__(self, payload):
+                self.payload = payload
+                self.response = None
+                self.status = None
+
+            def read_body_json(self):
+                return self.payload
+
+            def send_json(self, payload, status=200):
+                self.response = payload
+                self.status = status
+
+        manager = RacingBrowserManager()
+        saved = DummyHandler({"site_url": normalized["url"]})
+        cleared = DummyHandler({"site_url": normalized["url"]})
+
+        def clear_authorization():
+            clear_attempted.set()
+            web_app.WebUIHandler.handle_account_clear(cleared)
+
+        with patch.object(web_app, "BROWSER_SESSION_MANAGER", manager), \
+             patch.object(web_app, "normalize_site_url", return_value=normalized):
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                save_future = executor.submit(
+                    web_app.WebUIHandler.handle_browser_login_save,
+                    saved,
+                )
+                self.assertTrue(save_entered.wait(timeout=1))
+                clear_future = executor.submit(clear_authorization)
+                self.assertTrue(clear_attempted.wait(timeout=1))
+                try:
+                    self.assertFalse(
+                        clear_entered.wait(timeout=0.25),
+                        "clear entered the browser/store transaction while save was incomplete",
+                    )
+                finally:
+                    release_save.set()
+                save_future.result(timeout=2)
+                clear_future.result(timeout=2)
+
+        self.assertEqual(saved.status, 200)
+        self.assertEqual(cleared.status, 200)
+        self.assertNotIn("example.com", self.store.get("sites", {}))
+
+    def test_empty_account_clear_payload_keeps_legacy_clear_all_social_behavior(self):
+        self.store["platforms"] = {
+            self.platform: {"cookie": web_app.encrypt_secret("social-secret")}
+        }
+        self.store["sites"] = {
+            "example.com": {"browser_session": web_app.encrypt_secret('{"cookies": []}')}
+        }
+
+        class BrowserManager:
+            def __init__(self):
+                self.cleared_all = False
+
+            def clear_all_data(self):
+                self.cleared_all = True
+                return {"profile_trees_removed": 1, "live_sessions_closed": 0}
+
+        class DiagnosticStore:
+            def clear_all(self):
+                return 0
+
+        class DummyHandler:
+            def __init__(self, payload):
+                self.payload = payload
+                self.response = None
+                self.status = None
+
+            def read_body_json(self):
+                return self.payload
+
+            def send_json(self, payload, status=200):
+                self.response = payload
+                self.status = status
+
+        manager = BrowserManager()
+        handler = DummyHandler({})
+        with patch.object(web_app, "BROWSER_SESSION_MANAGER", manager), \
+             patch.object(web_app, "DIAGNOSTIC_STORE", DiagnosticStore()):
+            web_app.WebUIHandler.handle_account_clear(handler)
+
+        self.assertEqual(handler.status, 200)
+        self.assertTrue(manager.cleared_all)
+        self.assertEqual(self.store["platforms"], {})
+        self.assertIn("example.com", self.store["sites"])
+
+        ambiguous = DummyHandler(
+            {"platform": self.platform, "site_url": "https://example.com"}
+        )
+        web_app.WebUIHandler.handle_account_clear(ambiguous)
+        self.assertEqual(ambiguous.status, 400)
+
+    def test_run_crawl_job_passes_internal_site_session_resolver_without_history_secrets(self):
+        task_id = "site-session-resolver"
+        web_app.TASKS[task_id] = {
+            "status": "queued",
+            "created_at": "2026-08-23T10:00:00",
+            "events": [],
+        }
+        payload = {
+            "keywords": ["test"],
+            "site_sessions": {"example.com": {"browser_session": "must-not-enter-history"}},
+        }
+        try:
+            with patch.object(web_app, "crawl_and_save_serialized", return_value="data/latest_news.json") as crawl, \
+                 patch.object(web_app, "read_json", return_value={}), \
+                 patch.object(web_app, "write_json_atomic"), \
+                 patch.object(
+                     web_app,
+                     "build_latest_payload",
+                     return_value={
+                         "meta": {
+                             "summary": {"real_count": 1},
+                             "min_real_results": 1,
+                             "reached_min_real_results": True,
+                         }
+                     },
+                 ), \
+                 patch.object(web_app, "append_task_history") as append_history, \
+                 patch.object(web_app, "archive_task_snapshot", return_value={}), \
+                 patch.object(web_app, "upsert_history_manifest"):
+                web_app.run_crawl_job(task_id, payload)
+
+            self.assertIs(
+                crawl.call_args.kwargs["site_session_resolver"],
+                web_app.resolve_saved_site_session,
+            )
+            self.assertIs(
+                crawl.call_args.kwargs["site_session_status_recorder"],
+                web_app.record_site_session_status,
+            )
+            history_entry = append_history.call_args.args[0]
+            self.assertNotIn("must-not-enter-history", str(history_entry))
+            self.assertNotIn("site_sessions", history_entry["payload"])
+        finally:
+            web_app.TASKS.pop(task_id, None)
+
+    def test_run_monitor_crawl_passes_internal_site_session_resolver(self):
+        with patch.object(web_app, "crawl_and_save") as crawl:
+            web_app.run_monitor_crawl(
+                "monitor-site-session",
+                {"keywords": ["test"]},
+                web_app.ROOT / "data" / "_monitor_site_session.json",
+                web_app.ROOT / "data" / "_monitor_site_session_meta.json",
+            )
+
+        self.assertIs(
+            crawl.call_args.kwargs["site_session_resolver"],
+            web_app.resolve_saved_site_session,
+        )
+        self.assertIs(
+            crawl.call_args.kwargs["site_session_status_recorder"],
+            web_app.record_site_session_status,
+        )
 
     def test_saved_manual_cookie_takes_priority_over_browser_session(self):
         web_app.save_platform_browser_session(

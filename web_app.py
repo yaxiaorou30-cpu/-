@@ -52,7 +52,11 @@ from src.record_analysis import (
     apply_human_review,
 )
 from src.sensitive_artifacts import DiagnosticSnapshotStore
-from src.social_browser import BrowserSessionManager
+from src.social_browser import (
+    BrowserSessionManager,
+    filter_storage_state_for_site,
+    normalize_site_url,
+)
 from src.summary_builder import build_evidence_summary
 from src.system_auth import (
     DEFAULT_ABSOLUTE_TIMEOUT_SECONDS,
@@ -86,6 +90,8 @@ SYSTEM_SESSION_COOKIE = "police_session"
 TASKS = {}
 TASK_LOCK = threading.Lock()
 CRAWL_EXECUTION_LOCK = threading.Lock()
+ACCOUNT_STORE_LOCK = threading.RLock()
+SITE_AUTHORIZATION_LOCK = threading.RLock()
 MAX_EVENTS = 120
 MAX_HISTORY = 5000
 HISTORY_SUMMARY_FIELDS = (
@@ -224,7 +230,7 @@ def encrypt_secret(text: str) -> dict:
 
 
 def decrypt_secret(payload: dict) -> str:
-    if not payload or payload.get("scheme") == "empty":
+    if not isinstance(payload, dict) or payload.get("scheme") == "empty":
         return ""
     scheme = payload.get("scheme")
     value = payload.get("value", "")
@@ -248,19 +254,36 @@ def mask_secret(value: str, tail: int = 4) -> str:
 
 
 def read_account_store() -> dict:
-    store = read_json(ACCOUNT_STORE_FILE, {})
-    if not isinstance(store, dict):
-        store = {}
-    store.setdefault("version", 1)
-    store.setdefault("platforms", {})
-    return store
+    with ACCOUNT_STORE_LOCK:
+        store = read_json(ACCOUNT_STORE_FILE, {})
+        if not isinstance(store, dict):
+            store = {}
+        store.setdefault("version", 1)
+        if not isinstance(store.get("platforms"), dict):
+            store["platforms"] = {}
+        if not isinstance(store.get("sites"), dict):
+            store["sites"] = {}
+        return store
 
 
 def write_account_store(store: dict):
-    ACCOUNT_STORE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    store["updated_at"] = datetime.now().isoformat()
-    with ACCOUNT_STORE_FILE.open("w", encoding="utf-8") as f:
-        json.dump(store, f, ensure_ascii=False, indent=2)
+    with ACCOUNT_STORE_LOCK:
+        ACCOUNT_STORE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        store["updated_at"] = datetime.now().isoformat()
+        temporary = ACCOUNT_STORE_FILE.with_name(
+            f".{ACCOUNT_STORE_FILE.name}.{uuid.uuid4().hex}.tmp"
+        )
+        try:
+            with temporary.open("w", encoding="utf-8") as f:
+                json.dump(store, f, ensure_ascii=False, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(temporary, ACCOUNT_STORE_FILE)
+        finally:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                pass
 
 
 def decrypt_saved_accounts() -> dict:
@@ -279,6 +302,166 @@ def decrypt_saved_accounts() -> dict:
             "note": decrypt_secret(entry.get("note")),
         }
     return accounts
+
+
+def save_site_browser_session(site_url: str, session_result: dict):
+    with SITE_AUTHORIZATION_LOCK:
+        site = normalize_site_url(site_url, resolve_dns=False)
+        domain = site["domain"]
+        storage_state = filter_storage_state_for_site(
+            (session_result or {}).get("storage_state") or {},
+            domain,
+        )
+        storage_state_text = json.dumps(storage_state, ensure_ascii=False)
+        saved_at = str((session_result or {}).get("saved_at") or datetime.now().isoformat())
+        with ACCOUNT_STORE_LOCK:
+            store = read_account_store()
+            store.setdefault("sites", {})[domain] = {
+                "domain": domain,
+                "site_url": f"https://{domain}/",
+                "browser_session": encrypt_secret(storage_state_text),
+                "session_version": uuid.uuid4().hex,
+                "session_mode": "browser_session",
+                "browser_saved_at": saved_at,
+                "browser_cookie_count": len(storage_state.get("cookies") or []),
+                "browser_origin_count": len(storage_state.get("origins") or []),
+                "browser_has_local_storage": any(
+                    (origin or {}).get("localStorage")
+                    for origin in storage_state.get("origins") or []
+                ),
+                "needs_relogin": False,
+                "session_checked_at": "",
+                "updated_at": datetime.now().isoformat(),
+            }
+            write_account_store(store)
+
+
+def site_session_status_summary(domain: str, entry: dict = None) -> dict:
+    entry = entry if isinstance(entry, dict) else {}
+    storage_state_text = decrypt_secret(entry.get("browser_session"))
+    schemes = [
+        entry[key].get("scheme")
+        for key in ("browser_session",)
+        if isinstance(entry.get(key), dict)
+        and entry[key].get("scheme") not in (None, "empty")
+    ]
+    return {
+        "domain": domain,
+        "site_url": f"https://{domain}/",
+        "saved": bool(storage_state_text),
+        "browser_session_saved": bool(storage_state_text),
+        "browser_saved_at": str(entry.get("browser_saved_at") or ""),
+        "browser_cookie_count": int(entry.get("browser_cookie_count") or 0),
+        "browser_origin_count": int(entry.get("browser_origin_count") or 0),
+        "browser_has_local_storage": bool(entry.get("browser_has_local_storage")),
+        "needs_relogin": bool(entry.get("needs_relogin")),
+        "session_checked_at": str(entry.get("session_checked_at") or ""),
+        "updated_at": str(entry.get("updated_at") or ""),
+        "security_scheme": "dpapi" if "dpapi" in schemes else (schemes[0] if schemes else ""),
+    }
+
+
+def build_saved_site_session_statuses() -> dict:
+    with SITE_AUTHORIZATION_LOCK:
+        sites = read_account_store().get("sites", {})
+        return {
+            domain: site_session_status_summary(domain, sites[domain])
+            for domain in sorted(sites)
+        }
+
+
+def _site_session_version(entry: dict) -> str:
+    """Return the private compare-and-set token for one saved site session."""
+    version = str((entry or {}).get("session_version") or "").strip()
+    if version:
+        return version
+    encrypted_session = (entry or {}).get("browser_session")
+    if not encrypted_session:
+        return ""
+    legacy_token = json.dumps(
+        encrypted_session,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(legacy_token.encode("utf-8")).hexdigest()
+
+
+def resolve_saved_site_session(url: str):
+    with SITE_AUTHORIZATION_LOCK:
+        site = normalize_site_url(url, resolve_dns=False)
+        entry = read_account_store().get("sites", {}).get(site["domain"])
+        if not isinstance(entry, dict):
+            return None
+        session_version = _site_session_version(entry)
+        storage_state_text = decrypt_secret(entry.get("browser_session"))
+        if not storage_state_text:
+            record_site_session_status(site["domain"], True, session_version)
+            return None
+        try:
+            storage_state = json.loads(storage_state_text)
+            if not isinstance(storage_state, dict):
+                raise ValueError("网站会话存储格式无效")
+            storage_state = filter_storage_state_for_site(storage_state, site["domain"])
+        except (AttributeError, TypeError, ValueError):
+            record_site_session_status(site["domain"], True, session_version)
+            return None
+        has_local_storage = any(
+            (origin or {}).get("localStorage")
+            for origin in storage_state.get("origins") or []
+        )
+        if not storage_state.get("cookies") and not has_local_storage:
+            record_site_session_status(site["domain"], True, session_version)
+            return None
+        return {
+            "domain": site["domain"],
+            "storage_state": storage_state,
+            "session_version": session_version,
+        }
+
+
+def record_site_session_status(
+    domain: str,
+    needs_relogin: bool,
+    session_version: str,
+) -> bool:
+    """Persist only crawler-safe session health metadata for an existing site."""
+    if not isinstance(needs_relogin, bool):
+        raise ValueError("网站会话状态必须是布尔值")
+    session_version = str(session_version or "").strip()
+    if not session_version:
+        return False
+    domain = str(domain or "").strip().lower().rstrip(".")
+    site = normalize_site_url(f"https://{domain}/", resolve_dns=False)
+    with SITE_AUTHORIZATION_LOCK:
+        with ACCOUNT_STORE_LOCK:
+            store = read_account_store()
+            sites = store.get("sites", {})
+            entry = sites.get(site["domain"])
+            if not isinstance(entry, dict):
+                return False
+            if _site_session_version(entry) != session_version:
+                return False
+            updated = dict(entry)
+            updated["needs_relogin"] = needs_relogin
+            updated["session_checked_at"] = datetime.now().isoformat()
+            sites[site["domain"]] = updated
+            write_account_store(store)
+    return True
+
+
+def clear_site_authorization(site_url: str) -> dict:
+    with SITE_AUTHORIZATION_LOCK:
+        site = normalize_site_url(site_url, resolve_dns=False)
+        browser_result = BROWSER_SESSION_MANAGER.clear_site_data(site["domain"])
+        with ACCOUNT_STORE_LOCK:
+            store = read_account_store()
+            store.setdefault("sites", {}).pop(site["domain"], None)
+            write_account_store(store)
+        return {
+            "domain": site["domain"],
+            "browser": browser_result,
+        }
 
 
 def account_status_summary(platform: str, entry: dict = None) -> dict:
@@ -332,49 +515,52 @@ def build_saved_account_statuses() -> dict:
 def save_platform_account(platform: str, account: dict):
     if platform not in PLATFORM_LIST:
         raise ValueError("请选择有效的社交平台")
-    store = read_account_store()
-    current = store.setdefault("platforms", {}).get(platform, {})
-    entry = dict(current)
-    for key in ("username", "password", "cookie", "note"):
-        value = (account or {}).get(key)
-        if value is not None:
-            entry[key] = encrypt_secret(str(value).strip() if key != "password" else str(value))
-            if key == "cookie" and str(value).strip():
-                entry["session_mode"] = "manual_cookie"
-    entry["updated_at"] = datetime.now().isoformat()
-    store["platforms"][platform] = entry
-    write_account_store(store)
+    with ACCOUNT_STORE_LOCK:
+        store = read_account_store()
+        current = store.setdefault("platforms", {}).get(platform, {})
+        entry = dict(current)
+        for key in ("username", "password", "cookie", "note"):
+            value = (account or {}).get(key)
+            if value is not None:
+                entry[key] = encrypt_secret(str(value).strip() if key != "password" else str(value))
+                if key == "cookie" and str(value).strip():
+                    entry["session_mode"] = "manual_cookie"
+        entry["updated_at"] = datetime.now().isoformat()
+        store["platforms"][platform] = entry
+        write_account_store(store)
 
 
 def save_platform_browser_session(platform: str, session_result: dict):
     if platform not in PLATFORM_LIST:
         raise ValueError("请选择有效的社交平台")
-    store = read_account_store()
-    current = store.setdefault("platforms", {}).get(platform, {})
-    entry = dict(current)
-    storage_state = session_result.get("storage_state") or {}
-    cookie_header = session_result.get("cookie_header") or ""
-    entry["browser_session"] = encrypt_secret(json.dumps(storage_state, ensure_ascii=False))
-    entry["browser_cookie"] = encrypt_secret(cookie_header)
-    entry["session_mode"] = "browser_session"
-    entry["browser_saved_at"] = datetime.now().isoformat()
-    entry["browser_login_confirmed"] = session_result.get("login_confirmed")
-    entry["browser_login_evidence"] = session_result.get("evidence", "")
-    entry["browser_cookie_count"] = session_result.get("cookie_count", 0)
-    entry["browser_origin_count"] = session_result.get("origin_count", 0)
-    entry["browser_has_local_storage"] = session_result.get("has_local_storage", False)
-    entry["updated_at"] = datetime.now().isoformat()
-    store["platforms"][platform] = entry
-    write_account_store(store)
+    with ACCOUNT_STORE_LOCK:
+        store = read_account_store()
+        current = store.setdefault("platforms", {}).get(platform, {})
+        entry = dict(current)
+        storage_state = session_result.get("storage_state") or {}
+        cookie_header = session_result.get("cookie_header") or ""
+        entry["browser_session"] = encrypt_secret(json.dumps(storage_state, ensure_ascii=False))
+        entry["browser_cookie"] = encrypt_secret(cookie_header)
+        entry["session_mode"] = "browser_session"
+        entry["browser_saved_at"] = datetime.now().isoformat()
+        entry["browser_login_confirmed"] = session_result.get("login_confirmed")
+        entry["browser_login_evidence"] = session_result.get("evidence", "")
+        entry["browser_cookie_count"] = session_result.get("cookie_count", 0)
+        entry["browser_origin_count"] = session_result.get("origin_count", 0)
+        entry["browser_has_local_storage"] = session_result.get("has_local_storage", False)
+        entry["updated_at"] = datetime.now().isoformat()
+        store["platforms"][platform] = entry
+        write_account_store(store)
 
 
 def clear_platform_account(platform: str = ""):
-    store = read_account_store()
-    if platform:
-        store.get("platforms", {}).pop(platform, None)
-    else:
-        store["platforms"] = {}
-    write_account_store(store)
+    with ACCOUNT_STORE_LOCK:
+        store = read_account_store()
+        if platform:
+            store.get("platforms", {}).pop(platform, None)
+        else:
+            store["platforms"] = {}
+        write_account_store(store)
 
 
 def clear_platform_authorization(platform: str = "") -> dict:
@@ -394,25 +580,26 @@ def clear_platform_authorization(platform: str = "") -> dict:
 
 
 def save_account_test_result(platform: str, result: dict):
-    store = read_account_store()
-    entry = store.setdefault("platforms", {}).get(platform)
-    if entry is None:
-        return
-    entry["last_test"] = {
-        "tested_at": datetime.now().isoformat(),
-        "status": result.get("status", ""),
-        "reachable": result.get("reachable"),
-        "passed": bool(result.get("passed")),
-        "read_passed": bool(result.get("read_passed")),
-        "login_passed": bool(result.get("login_passed")),
-        "login_confirmed": result.get("login_confirmed"),
-        "parsed_count": result.get("parsed_count", 0),
-        "error": result.get("error", ""),
-        "evidence": result.get("evidence", ""),
-        "message": result.get("message", ""),
-    }
-    store["platforms"][platform] = entry
-    write_account_store(store)
+    with ACCOUNT_STORE_LOCK:
+        store = read_account_store()
+        entry = store.setdefault("platforms", {}).get(platform)
+        if entry is None:
+            return
+        entry["last_test"] = {
+            "tested_at": datetime.now().isoformat(),
+            "status": result.get("status", ""),
+            "reachable": result.get("reachable"),
+            "passed": bool(result.get("passed")),
+            "read_passed": bool(result.get("read_passed")),
+            "login_passed": bool(result.get("login_passed")),
+            "login_confirmed": result.get("login_confirmed"),
+            "parsed_count": result.get("parsed_count", 0),
+            "error": result.get("error", ""),
+            "evidence": result.get("evidence", ""),
+            "message": result.get("message", ""),
+        }
+        store["platforms"][platform] = entry
+        write_account_store(store)
 
 
 def parse_keywords(raw):
@@ -486,6 +673,28 @@ def prepare_account_for_crawler(account: dict) -> dict:
         prepared["cookie"] = prepared.get("browser_cookie", "")
         prepared["session_mode"] = "browser_session"
     return prepared
+
+
+def browser_login_target(payload: dict, *, resolve_site_dns: bool) -> dict:
+    payload = payload if isinstance(payload, dict) else {}
+    platform = str(payload.get("platform") or "").strip()
+    site_url = str(payload.get("site_url") or "").strip()
+    if bool(platform) == bool(site_url):
+        raise ValueError("社交平台和网站地址必须二选一")
+    if platform:
+        return {"kind": "platform", "platform": platform}
+    site = normalize_site_url(site_url, resolve_dns=resolve_site_dns)
+    return {"kind": "site", **site}
+
+
+def account_clear_target(payload: dict) -> dict:
+    """Keep the legacy empty-body meaning: clear every social authorization."""
+    payload = payload if isinstance(payload, dict) else {}
+    platform = str(payload.get("platform") or "").strip()
+    site_url = str(payload.get("site_url") or "").strip()
+    if not platform and not site_url:
+        return {"kind": "platform", "platform": ""}
+    return browser_login_target(payload, resolve_site_dns=False)
 
 
 def task_payload_summary(payload):
@@ -879,6 +1088,12 @@ def run_crawl_job(task_id: str, payload: dict):
             source_acceptance=source_acceptance,
             live_browser_reader=BROWSER_SESSION_MANAGER.read_page,
             live_login_probe=BROWSER_SESSION_MANAGER.probe_login_controls,
+            site_session_resolver=(
+                None if source_acceptance else resolve_saved_site_session
+            ),
+            site_session_status_recorder=(
+                None if source_acceptance else record_site_session_status
+            ),
         )
         payload_summary = task_payload_summary(payload)
         generated_meta = read_json(meta_file, {})
@@ -967,6 +1182,8 @@ def run_monitor_crawl(
         source_acceptance=False,
         live_browser_reader=BROWSER_SESSION_MANAGER.read_page,
         live_login_probe=BROWSER_SESSION_MANAGER.probe_login_controls,
+        site_session_resolver=resolve_saved_site_session,
+        site_session_status_recorder=record_site_session_status,
     )
     return {
         "records": read_json(output_file, []),
@@ -1250,13 +1467,18 @@ class WebUIHandler(BaseHTTPRequestHandler):
             self.send_json(self.build_options())
             return
         if parsed.path == "/api/accounts":
-            self.send_json({"ok": True, "accounts": build_saved_account_statuses()})
+            self.send_json({
+                "ok": True,
+                "accounts": build_saved_account_statuses(),
+                "site_sessions": build_saved_site_session_statuses(),
+            })
             return
         if parsed.path == "/api/browser-login/status":
             self.send_json({
                 "ok": True,
                 "live_sessions": BROWSER_SESSION_MANAGER.status(),
                 "accounts": build_saved_account_statuses(),
+                "site_sessions": build_saved_site_session_statuses(),
             })
             return
         if parsed.path == "/api/latest":
@@ -1718,6 +1940,7 @@ class WebUIHandler(BaseHTTPRequestHandler):
             "task_history": history_catalog["history"][:20],
             "history_catalog": history_catalog,
             "saved_accounts": build_saved_account_statuses(),
+            "site_sessions": build_saved_site_session_statuses(),
             "compliance_notice": "仅采集公开可访问内容；账号 Cookie/密码可加密保存在本机，不会写入采集结果、日志或报告；默认不使用系统代理，可按需手动开启。",
             "ai_provider": deepseek_configuration_status(),
             "latest": self.build_latest(),
@@ -2024,6 +2247,7 @@ class WebUIHandler(BaseHTTPRequestHandler):
                 "ok": True,
                 "message": "账号授权信息已加密保存",
                 "accounts": build_saved_account_statuses(),
+                "site_sessions": build_saved_site_session_statuses(),
             })
         except Exception as exc:
             self.send_json({"ok": False, "message": str(exc)}, status=500)
@@ -2031,13 +2255,29 @@ class WebUIHandler(BaseHTTPRequestHandler):
     def handle_account_clear(self):
         try:
             payload = self.read_body_json()
-            platform = payload.get("platform") or ""
-            clear_result = clear_platform_authorization(platform)
+            target = account_clear_target(payload)
+        except ValueError as exc:
+            self.send_json({"ok": False, "message": str(exc)}, status=400)
+            return
+        except Exception as exc:
+            self.send_json({"ok": False, "message": str(exc)}, status=500)
+            return
+        try:
+            if target["kind"] == "site":
+                with SITE_AUTHORIZATION_LOCK:
+                    clear_result = clear_site_authorization(target["url"])
+                    site_sessions = build_saved_site_session_statuses()
+                    message = "网站辅助登录会话已清除"
+            else:
+                clear_result = clear_platform_authorization(target["platform"])
+                site_sessions = build_saved_site_session_statuses()
+                message = "账号授权、辅助登录会话、浏览器配置和关联诊断已清除"
             self.send_json({
                 "ok": True,
-                "message": "账号授权、辅助登录会话、浏览器配置和关联诊断已清除",
+                "message": message,
                 "clear_result": clear_result,
                 "accounts": build_saved_account_statuses(),
+                "site_sessions": site_sessions,
             })
         except Exception as exc:
             self.send_json({"ok": False, "message": str(exc)}, status=500)
@@ -2045,12 +2285,26 @@ class WebUIHandler(BaseHTTPRequestHandler):
     def handle_browser_login_start(self):
         try:
             payload = self.read_body_json()
-            platform = payload.get("platform") or ""
-            status = BROWSER_SESSION_MANAGER.start_login(platform)
+            target = browser_login_target(payload, resolve_site_dns=True)
+        except ValueError as exc:
+            self.send_json({"ok": False, "message": str(exc)}, status=400)
+            return
+        except Exception as exc:
+            self.send_json({"ok": False, "message": str(exc)}, status=500)
+            return
+        try:
+            if target["kind"] == "site":
+                with SITE_AUTHORIZATION_LOCK:
+                    status = BROWSER_SESSION_MANAGER.start_site_login(target["url"])
+                    site_sessions = build_saved_site_session_statuses()
+            else:
+                status = BROWSER_SESSION_MANAGER.start_login(target["platform"])
+                site_sessions = build_saved_site_session_statuses()
             self.send_json({
                 "ok": True,
                 "message": "辅助登录浏览器已打开，请在窗口中完成网页登录",
                 "session": status,
+                "site_sessions": site_sessions,
             })
         except Exception as exc:
             self.send_json({"ok": False, "message": str(exc)}, status=500)
@@ -2058,34 +2312,57 @@ class WebUIHandler(BaseHTTPRequestHandler):
     def handle_browser_login_save(self):
         try:
             payload = self.read_body_json()
-            platform = payload.get("platform") or ""
-            result = BROWSER_SESSION_MANAGER.save_session(platform)
-            save_platform_browser_session(platform, result)
-            test_result = {
-                "status": "login_only" if result.get("login_confirmed") is True else "partial",
-                "reachable": True,
-                "passed": False,
-                "read_passed": False,
-                "login_passed": result.get("login_confirmed") is True,
-                "login_confirmed": result.get("login_confirmed"),
-                "parsed_count": 0,
-                "error": "",
-                "evidence": result.get("evidence", ""),
-                "message": "浏览器会话已保存",
-            }
-            save_account_test_result(platform, test_result)
-            self.send_json({
-                "ok": True,
-                "message": "浏览器会话已加密保存",
-                "saved": {
+            target = browser_login_target(payload, resolve_site_dns=False)
+        except ValueError as exc:
+            self.send_json({"ok": False, "message": str(exc)}, status=400)
+            return
+        except Exception as exc:
+            self.send_json({"ok": False, "message": str(exc)}, status=500)
+            return
+        try:
+            if target["kind"] == "site":
+                with SITE_AUTHORIZATION_LOCK:
+                    result = BROWSER_SESSION_MANAGER.save_site_session(target["domain"])
+                    save_site_browser_session(target["url"], result)
+                    saved = {
+                        "domain": target["domain"],
+                        "cookie_count": result.get("cookie_count", 0),
+                        "origin_count": result.get("origin_count", 0),
+                        "has_local_storage": result.get("has_local_storage", False),
+                    }
+                    site_sessions = build_saved_site_session_statuses()
+            else:
+                platform = target["platform"]
+                result = BROWSER_SESSION_MANAGER.save_session(platform)
+                save_platform_browser_session(platform, result)
+                test_result = {
+                    "status": "login_only" if result.get("login_confirmed") is True else "partial",
+                    "reachable": True,
+                    "passed": False,
+                    "read_passed": False,
+                    "login_passed": result.get("login_confirmed") is True,
+                    "login_confirmed": result.get("login_confirmed"),
+                    "parsed_count": 0,
+                    "error": "",
+                    "evidence": result.get("evidence", ""),
+                    "message": "浏览器会话已保存",
+                }
+                save_account_test_result(platform, test_result)
+                saved = {
                     "platform": platform,
                     "cookie_count": result.get("cookie_count", 0),
                     "origin_count": result.get("origin_count", 0),
                     "has_local_storage": result.get("has_local_storage", False),
                     "login_confirmed": result.get("login_confirmed"),
                     "evidence": result.get("evidence", ""),
-                },
+                }
+                site_sessions = build_saved_site_session_statuses()
+            self.send_json({
+                "ok": True,
+                "message": "浏览器会话已加密保存",
+                "saved": saved,
                 "accounts": build_saved_account_statuses(),
+                "site_sessions": site_sessions,
             })
         except Exception as exc:
             self.send_json({"ok": False, "message": str(exc)}, status=500)
@@ -2093,13 +2370,27 @@ class WebUIHandler(BaseHTTPRequestHandler):
     def handle_browser_login_close(self):
         try:
             payload = self.read_body_json()
-            platform = payload.get("platform") or ""
-            result = BROWSER_SESSION_MANAGER.close_session(platform)
+            target = browser_login_target(payload, resolve_site_dns=False)
+        except ValueError as exc:
+            self.send_json({"ok": False, "message": str(exc)}, status=400)
+            return
+        except Exception as exc:
+            self.send_json({"ok": False, "message": str(exc)}, status=500)
+            return
+        try:
+            if target["kind"] == "site":
+                with SITE_AUTHORIZATION_LOCK:
+                    result = BROWSER_SESSION_MANAGER.close_site_session(target["domain"])
+                    site_sessions = build_saved_site_session_statuses()
+            else:
+                result = BROWSER_SESSION_MANAGER.close_session(target["platform"])
+                site_sessions = build_saved_site_session_statuses()
             self.send_json({
                 "ok": True,
                 "message": result.get("message", "辅助登录浏览器已关闭"),
                 "session": result,
                 "accounts": build_saved_account_statuses(),
+                "site_sessions": site_sessions,
             })
         except Exception as exc:
             self.send_json({"ok": False, "message": str(exc)}, status=500)

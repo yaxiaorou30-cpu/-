@@ -559,6 +559,7 @@ input[type="text"],
 input[type="password"],
 input[type="number"],
 input[type="date"],
+input[type="url"],
 select,
 textarea {
   width: 100%;
@@ -576,6 +577,7 @@ input[type="text"],
 input[type="password"],
 input[type="number"],
 input[type="date"],
+input[type="url"],
 select {
   padding: 8px 10px;
 }
@@ -2757,6 +2759,10 @@ td a {
   background: var(--ink-050);
 }
 
+.site-session-card {
+  margin-bottom: 12px;
+}
+
 .account-card-header {
   display: flex;
   align-items: center;
@@ -2782,6 +2788,11 @@ td a {
 .account-badge.saved {
   color: var(--teal-700);
   background: var(--teal-100);
+}
+
+.account-badge.needs-login {
+  color: var(--red-700);
+  background: var(--red-100);
 }
 
 .account-status-detail {
@@ -3803,6 +3814,7 @@ td a {
   .overview-grid,
   .history-workspace.detail-open,
   .source-layout,
+  .account-workspace,
   .account-grid,
   .monitor-metrics,
   .monitor-workspace,
@@ -3813,6 +3825,10 @@ td a {
   }
 
   .monitor-plan-panel {
+    position: static;
+  }
+
+  .source-operation-panel {
     position: static;
   }
 

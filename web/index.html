@@ -573,6 +573,34 @@
                 <p class="section-description">
                   优先使用“打开辅助登录 → 人工完成登录/验证码 → 保存会话”。账号信息只在本机加密保存。
                 </p>
+                <div class="account-card site-session-card" id="siteSessionCard">
+                  <div class="account-card-header">
+                    <h3>通用网站登录会话</h3>
+                    <span class="account-badge" id="siteSessionBadge">未保存</span>
+                  </div>
+                  <p class="account-status-detail" id="siteSessionStatus" aria-live="polite">
+                    填写网站登录页地址；同一域名再次保存会覆盖原会话。
+                  </p>
+                  <label class="field" for="siteLoginUrl">
+                    <span>网站登录页</span>
+                    <input
+                      id="siteLoginUrl"
+                      type="url"
+                      inputmode="url"
+                      autocomplete="url"
+                      placeholder="https://news.example.com/login"
+                      aria-describedby="siteSessionStatus"
+                      required
+                    />
+                    <small>只接受 HTTPS 公网地址；保存后仅用于完全相同的域名。</small>
+                  </label>
+                  <div class="account-actions">
+                    <button class="secondary-btn" id="openSiteLoginBtn" type="button">打开辅助登录</button>
+                    <button class="secondary-btn" id="saveSiteSessionBtn" type="button">保存会话</button>
+                    <button class="ghost-btn" id="closeSiteLoginBtn" type="button">关闭窗口</button>
+                    <button class="ghost-btn" id="clearSiteSessionBtn" type="button">清除会话</button>
+                  </div>
+                </div>
                 <div class="account-grid" id="accountGrid"></div>
               </section>
 
