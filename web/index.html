@@ -143,7 +143,7 @@
                     <label class="field">
                       <span>时间范围</span>
                       <select id="timeRange"></select>
-                      <small>只保留发布时间落在范围内的记录。</small>
+                      <small>有可靠发布时间的记录按范围筛选；时间未知的记录仍会保留并标记。</small>
                     </label>
                   </div>
                   <div class="custom-date-range hidden" id="customDateRange">
@@ -403,6 +403,15 @@
                   <span>情感参考</span>
                   <select id="reviewSentimentFilter">
                     <option value="">全部情感</option>
+                  </select>
+                </label>
+                <label>
+                  <span>正文核查</span>
+                  <select id="reviewStatusFilter">
+                    <option value="">全部核查状态</option>
+                    <option value="pending">待人工核查</option>
+                    <option value="checked">已人工核查</option>
+                    <option value="normal">正文正常</option>
                   </select>
                 </label>
                 <button class="secondary-btn review-filter-clear" id="clearReviewFilters" type="button">清除筛选</button>

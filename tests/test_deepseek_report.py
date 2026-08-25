@@ -592,6 +592,37 @@ class DeepSeekReportTests(unittest.TestCase):
         self.assertEqual(scope["excluded_unreviewed_count"], 1)
         self.assertNotIn(self.unreviewed_record["content"], serialized)
 
+    def test_pending_body_review_is_excluded_even_after_label_review(self):
+        pending_record = {
+            **self.public_record,
+            "title": "正文获取失败但分类情感已经审核",
+            "content": "这只是搜索来源返回的摘要，不得作为 DeepSeek 正文证据。",
+            "url": "https://public.example.com/pending-body-review",
+            "body_fetch_status": "failed",
+        }
+        preview = {
+            "key_samples": [
+                self.preview["key_samples"][0],
+                {
+                    "reference_id": "S3",
+                    "title": pending_record["title"],
+                    "url": pending_record["url"],
+                },
+            ]
+        }
+
+        payload, scope = build_deepseek_request(
+            [self.public_record, pending_record],
+            preview,
+        )
+
+        serialized = json.dumps(payload, ensure_ascii=False)
+        self.assertEqual(scope["reviewed_record_count"], 2)
+        self.assertEqual(scope["eligible_record_count"], 1)
+        self.assertEqual(scope["excluded_unreviewed_count"], 0)
+        self.assertEqual(scope["evidence_ids"], ["S1"])
+        self.assertNotIn(pending_record["content"], serialized)
+
     def test_disclosure_never_contains_evidence_text_or_api_key(self):
         disclosure = build_ai_report_disclosure(
             [self.public_record, self.login_record],

@@ -460,6 +460,20 @@ class ReportGenerationTests(unittest.TestCase):
         self.assertEqual(context.time_range[0], context.time_range[1])
         self.assertEqual(context.time_range[0].strftime("%Y-%m-%d"), "2026-07-02")
 
+    def test_report_preview_rejects_failed_body_until_original_is_checked(self):
+        root = self._temporary_data_dir("_test_pending_body_")
+        data_path = root / "latest_news.json"
+        data_path.write_text(
+            json.dumps([{
+                **self._sample_data()[0],
+                "body_fetch_status": "failed",
+            }], ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+        with self.assertRaisesRegex(ValueError, "正文获取失败"):
+            build_report_preview(str(data_path), "event_report")
+
     def test_generic_social_content_does_not_create_case_progress(self):
         records = Preprocessor().process([{
             "title": "网友讨论一则社会事件",

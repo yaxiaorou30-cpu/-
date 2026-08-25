@@ -46,6 +46,7 @@ const els = {
   reviewSourceFilter: document.getElementById("reviewSourceFilter"),
   reviewCategoryFilter: document.getElementById("reviewCategoryFilter"),
   reviewSentimentFilter: document.getElementById("reviewSentimentFilter"),
+  reviewStatusFilter: document.getElementById("reviewStatusFilter"),
   clearReviewFilters: document.getElementById("clearReviewFilters"),
   reviewVisibleCount: document.getElementById("reviewVisibleCount"),
   summarySourceBtn: document.getElementById("summarySourceBtn"),
@@ -1573,10 +1574,15 @@ function renderTable(data) {
 
   data.forEach((item, index) => {
     const row = document.createElement("tr");
+    const bodyFetchFailed = item.body_fetch_status === "failed";
+    const bodyManuallyChecked = Boolean(item.body_manual_review?.reviewed_at);
     row.dataset.index = String(index);
     row.dataset.platform = item.platform || item.source || "未知";
     row.dataset.category = item.content_category || "其他";
     row.dataset.sentiment = item.sentiment_label || "中性";
+    row.dataset.reviewStatus = bodyFetchFailed
+      ? (bodyManuallyChecked ? "checked" : "pending")
+      : "normal";
     const keep = document.createElement("td");
     const title = document.createElement("td");
     const source = document.createElement("td");
@@ -1622,12 +1628,25 @@ function renderTable(data) {
     contentExcerpt.textContent = String(item.content || "无正文摘要").replace(/\s+/g, " ").slice(0, 140);
     title.appendChild(contentExcerpt);
 
+    if (bodyFetchFailed) {
+      const bodyStatus = document.createElement("small");
+      bodyStatus.className = "review-machine-hint pending";
+      bodyStatus.textContent = bodyManuallyChecked
+        ? "已人工核查：自动正文获取失败"
+        : "待人工核查：正文获取失败";
+      title.appendChild(bodyStatus);
+    }
+
     const rowActions = document.createElement("div");
     rowActions.className = "review-row-actions";
     const summarizeButton = document.createElement("button");
     summarizeButton.className = "text-btn row-summary-btn";
     summarizeButton.type = "button";
     summarizeButton.textContent = "生成这条摘要";
+    summarizeButton.disabled = bodyFetchFailed && !bodyManuallyChecked;
+    if (summarizeButton.disabled) {
+      summarizeButton.title = "请先打开原文并完成人工核查";
+    }
     summarizeButton.addEventListener("click", () => {
       generateEvidenceSummary("record", index, summarizeButton);
     });
@@ -1722,6 +1741,22 @@ function renderTable(data) {
     sentimentGroup.append(sentimentLabel, sentimentSelect, sentimentHint);
     decision.append(categoryGroup, sentimentGroup);
 
+    if (bodyFetchFailed) {
+      const bodyReviewLabel = document.createElement("label");
+      bodyReviewLabel.className = "review-body-check";
+      const bodyReviewCheck = document.createElement("input");
+      bodyReviewCheck.type = "checkbox";
+      bodyReviewCheck.className = "body-review-check";
+      bodyReviewCheck.checked = bodyManuallyChecked;
+      bodyReviewCheck.disabled = bodyManuallyChecked;
+      const bodyReviewText = document.createElement("span");
+      bodyReviewText.textContent = bodyManuallyChecked
+        ? "原文已人工核查"
+        : "我已打开原文并核查";
+      bodyReviewLabel.append(bodyReviewCheck, bodyReviewText);
+      decision.appendChild(bodyReviewLabel);
+    }
+
     row.append(keep, title, source, decision);
     els.resultBody.appendChild(row);
   });
@@ -1786,11 +1821,13 @@ function applyReviewFilters() {
   const source = els.reviewSourceFilter?.value || "";
   const category = els.reviewCategoryFilter?.value || "";
   const sentiment = els.reviewSentimentFilter?.value || "";
+  const reviewStatus = els.reviewStatusFilter?.value || "";
   let visible = 0;
   rows.forEach((row) => {
     const matches = (!source || row.dataset.platform === source)
       && (!category || row.dataset.category === category)
-      && (!sentiment || row.dataset.sentiment === sentiment);
+      && (!sentiment || row.dataset.sentiment === sentiment)
+      && (!reviewStatus || row.dataset.reviewStatus === reviewStatus);
     row.hidden = !matches;
     if (matches) visible += 1;
   });
@@ -1955,6 +1992,7 @@ function currentReportFilter() {
     source: els.reviewSourceFilter?.value || "",
     category: els.reviewCategoryFilter?.value || "",
     sentiment: els.reviewSentimentFilter?.value || "",
+    review_status: els.reviewStatusFilter?.value || "",
   };
 }
 
@@ -1963,7 +2001,16 @@ function reportFilterDescription(reportFilter = currentReportFilter()) {
     reportFilter.source ? `来源：${reportFilter.source}` : "",
     reportFilter.category ? `分类：${reportFilter.category}` : "",
     reportFilter.sentiment ? `情感：${reportFilter.sentiment}` : "",
+    reportFilter.review_status ? `正文核查：${reviewStatusLabel(reportFilter.review_status)}` : "",
   ].filter(Boolean);
+}
+
+function reviewStatusLabel(value) {
+  return {
+    pending: "待人工核查",
+    checked: "已人工核查",
+    normal: "正文正常",
+  }[value] || value;
 }
 
 function updateReportScopeSummary(matchedTotal, originalTotal) {
@@ -1974,7 +2021,7 @@ function updateReportScopeSummary(matchedTotal, originalTotal) {
     els.reportScopeDetail.textContent = parts.join(" · ");
   } else {
     els.reportScopeSummary.textContent = `使用全部 ${originalTotal} 条已审核数据`;
-    els.reportScopeDetail.textContent = "未设置来源、分类或情感条件。";
+    els.reportScopeDetail.textContent = "未设置来源、分类、情感或正文核查条件。";
   }
 }
 
@@ -1997,7 +2044,7 @@ function safeExternalUrl(value) {
 
 function formatPublicationTime(item) {
   const value = (item.pub_time || "").trim();
-  if (!value) return "-";
+  if (!value) return "时间未知";
   if (item.time_basis === "published_date" || /^\d{4}-\d{2}-\d{2}$/.test(value)) {
     return value.slice(0, 10);
   }
@@ -2321,7 +2368,7 @@ function renderReportPreview(preview) {
       const title = document.createElement("strong");
       title.textContent = `${sample.reference_id || "-"} · ${sample.title || "(无标题)"}`;
       const meta = document.createElement("span");
-      meta.textContent = `${sample.platform || "-"} · ${sample.source || "-"} · ${sample.pub_time || "-"}`;
+      meta.textContent = `${sample.platform || "-"} · ${sample.source || "-"} · ${formatPublicationTime(sample)}`;
       item.append(title, meta);
       list.appendChild(item);
     });
@@ -2776,6 +2823,7 @@ async function saveReview() {
     content_category: row.querySelector(".review-category")?.value || "其他",
     sentiment_label: row.querySelector(".review-sentiment")?.value || "中性",
     note: row.querySelector(".review-note")?.value || "",
+    body_verified: Boolean(row.querySelector(".body-review-check")?.checked),
   }));
   const keptCount = reviews.filter((item) => item.keep).length;
   setBusy(true);
@@ -3204,10 +3252,16 @@ els.reviewSentimentFilter.addEventListener("change", () => {
   clearEvidenceSummary();
   invalidateReportForScopeChange();
 });
+els.reviewStatusFilter.addEventListener("change", () => {
+  applyReviewFilters();
+  clearEvidenceSummary();
+  invalidateReportForScopeChange();
+});
 els.clearReviewFilters.addEventListener("click", () => {
   els.reviewSourceFilter.value = "";
   els.reviewCategoryFilter.value = "";
   els.reviewSentimentFilter.value = "";
+  els.reviewStatusFilter.value = "";
   applyReviewFilters();
   clearEvidenceSummary();
   invalidateReportForScopeChange();

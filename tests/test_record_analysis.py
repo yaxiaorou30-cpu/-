@@ -5,7 +5,12 @@ from pathlib import Path
 from src.analyzer import Analyzer
 from src.orchestrator import build_report_preview
 from src.preprocessor import Preprocessor
-from src.record_analysis import annotate_record, apply_human_review, classify_content
+from src.record_analysis import (
+    annotate_record,
+    apply_human_review,
+    body_review_is_pending,
+    classify_content,
+)
 from web_app import build_reviewed_records, filter_report_records, review_is_complete
 
 
@@ -53,6 +58,47 @@ class RecordAnalysisTests(unittest.TestCase):
         self.assertTrue(reviewed["human_review"]["category_changed"])
         self.assertEqual(reviewed["human_review"]["reviewed_by"], "民警甲")
 
+    def test_body_fetch_failure_requires_explicit_original_content_check(self):
+        record = {
+            **self._science_record(),
+            "body_fetch_status": "failed",
+        }
+
+        with self.assertRaisesRegex(ValueError, "正文获取失败"):
+            apply_human_review(
+                record,
+                content_category="科技与教育",
+                sentiment_label="正面",
+                reviewer="民警甲",
+                reviewed_at="2026-07-31T21:00:00",
+            )
+
+        reviewed = apply_human_review(
+            record,
+            content_category="科技与教育",
+            sentiment_label="正面",
+            reviewer="民警甲",
+            reviewed_at="2026-07-31T21:00:00",
+            body_verified=True,
+        )
+
+        self.assertFalse(body_review_is_pending(reviewed))
+        self.assertEqual(
+            reviewed["body_manual_review"]["reviewed_at"],
+            "2026-07-31T21:00:00",
+        )
+        self.assertEqual(reviewed["body_manual_review"]["reviewed_by"], "民警甲")
+
+    def test_unknown_time_with_successful_body_is_not_pending(self):
+        record = {
+            **self._science_record(),
+            "pub_time": "",
+            "time_basis": "unknown",
+            "body_fetch_status": "success",
+        }
+
+        self.assertFalse(body_review_is_pending(record))
+
     def test_review_merge_cannot_overwrite_source_evidence_fields(self):
         original = [self._science_record(), {**self._science_record(), "url": "https://example.com/other"}]
         reviewed, summary = build_reviewed_records(
@@ -96,6 +142,18 @@ class RecordAnalysisTests(unittest.TestCase):
                 "labels_confirmed": True,
             },
         }))
+
+    def test_pending_body_review_does_not_unlock_report(self):
+        data = [{**self._science_record(), "body_fetch_status": "failed"}]
+        meta = {
+            "review": {
+                "reviewed_at": "2026-07-31T21:00:00",
+                "kept_total": 1,
+                "labels_confirmed": True,
+            }
+        }
+
+        self.assertFalse(review_is_complete(data, meta))
 
     def test_analyzer_and_report_use_human_confirmed_labels(self):
         reviewed = apply_human_review(
@@ -172,6 +230,31 @@ class RecordAnalysisTests(unittest.TestCase):
     def test_report_scope_rejects_empty_result(self):
         with self.assertRaisesRegex(ValueError, "没有匹配数据"):
             filter_report_records([self._science_record()], {"sentiment": "负面"})
+
+    def test_report_scope_filters_by_completed_body_review_status(self):
+        checked = {
+            **self._science_record(),
+            "url": "https://example.com/checked",
+            "body_fetch_status": "failed",
+            "body_manual_review": {
+                "reviewed_at": "2026-07-31T21:00:00",
+                "reviewed_by": "民警甲",
+            },
+        }
+        normal = {
+            **self._science_record(),
+            "url": "https://example.com/normal",
+            "body_fetch_status": "success",
+        }
+
+        scoped, summary = filter_report_records(
+            [checked, normal],
+            {"review_status": "checked"},
+        )
+
+        self.assertEqual([record["url"] for record in scoped], [checked["url"]])
+        self.assertTrue(summary["active"])
+        self.assertEqual(summary["filters"]["review_status"], "checked")
 
 
 if __name__ == "__main__":

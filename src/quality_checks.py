@@ -39,7 +39,8 @@ def build_collection_assessment(raw_data: List[dict], meta: Optional[dict] = Non
     empty_content_count = sum(
         1
         for item in data
-        if not str(item.get("content") or item.get("title") or "").strip()
+        if item.get("body_fetch_status") == "failed"
+        or not str(item.get("content") or item.get("title") or "").strip()
     )
 
     selected_social = _unique_strings(meta.get("social_platforms") or meta.get("platforms") or [])
@@ -312,10 +313,10 @@ def _content_check(total: int, empty_count: int) -> Dict:
     valid_count = max(0, total - empty_count)
     if total == 0 or valid_count == 0:
         status = "fail"
-        detail = "没有可供阅读和分析的标题或正文。"
+        detail = "没有可供阅读和分析的正文；正文获取失败或内容为空的记录需要补采或人工核查。"
     elif empty_count:
         status = "warning"
-        detail = f"有 {empty_count} 条记录缺少标题和正文，请补采或从审核结果中排除。"
+        detail = f"有 {empty_count} 条记录正文获取失败或没有可用内容，请补采或进行人工核查。"
     else:
         status = "pass"
         detail = "所有记录至少包含标题或正文。"

@@ -17,6 +17,8 @@ from typing import Callable, Iterable
 
 import requests
 
+from src.record_analysis import body_review_is_pending
+
 
 DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions"
 DEEPSEEK_PROVIDER = "DeepSeek"
@@ -663,7 +665,10 @@ def _prepare_reviewed_evidence(
 ) -> dict:
     usable_records = [item for item in records or [] if isinstance(item, dict)]
     reviewed_records = [item for item in usable_records if _is_human_reviewed(item)]
-    public_records = [item for item in reviewed_records if _is_anonymous_public(item)]
+    eligible_records = [
+        item for item in reviewed_records if not body_review_is_pending(item)
+    ]
+    public_records = [item for item in eligible_records if _is_anonymous_public(item)]
     candidates = []
     seen_ids = set()
     catalog = (
@@ -677,7 +682,7 @@ def _prepare_reviewed_evidence(
         reference_id = str(sample.get("reference_id") or "")
         if not re.fullmatch(r"S\d+", reference_id) or reference_id in seen_ids:
             continue
-        record = _match_sample_record(sample, reviewed_records)
+        record = _match_sample_record(sample, eligible_records)
         if not record:
             continue
         raw_value = record.get("content")
@@ -738,9 +743,9 @@ def _prepare_reviewed_evidence(
         "evidence": evidence,
         "scope": {
             "reviewed_record_count": len(reviewed_records),
-            "eligible_record_count": len(reviewed_records),
+            "eligible_record_count": len(eligible_records),
             "public_record_count": len(public_records),
-            "login_record_count": len(reviewed_records) - len(public_records),
+            "login_record_count": len(eligible_records) - len(public_records),
             "excluded_nonpublic_count": 0,
             "excluded_unreviewed_count": len(usable_records) - len(reviewed_records),
             "candidate_evidence_count": len(candidates),

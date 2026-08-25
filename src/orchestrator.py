@@ -12,9 +12,20 @@ from src.pipeline import Pipeline
 from src.renderer import Renderer
 from src.file_namer import generate_filename, ensure_unique_path
 from src.report_builder import attach_report_metadata, select_key_samples
+from src.record_analysis import body_review_is_pending
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+
+def _require_completed_body_reviews(raw_data: List[dict]) -> None:
+    pending_count = sum(
+        1 for record in raw_data if body_review_is_pending(record)
+    )
+    if pending_count:
+        raise ValueError(
+            f"有 {pending_count} 条记录正文获取失败且尚未人工核查，不能生成报告"
+        )
 
 
 class Orchestrator:
@@ -36,6 +47,7 @@ class Orchestrator:
 
         raw_data = list(raw_data_override) if raw_data_override is not None else self._load_json(input_json)
         meta = dict(meta_override) if meta_override is not None else self._load_related_meta(input_json)
+        _require_completed_body_reviews(raw_data)
         records = self.preprocessor.process(raw_data)
         records = self.preprocessor.deduplicate(records)
 
@@ -95,6 +107,7 @@ class Orchestrator:
         logger.info(f"生成报告预览: input={input_json}, template={template_id}")
         raw_data = list(raw_data_override) if raw_data_override is not None else self._load_json(input_json)
         meta = dict(meta_override) if meta_override is not None else self._load_related_meta(input_json)
+        _require_completed_body_reviews(raw_data)
         records = self.preprocessor.process(raw_data)
         records = self.preprocessor.deduplicate(records)
         analysis_context = self.analyzer.analyze(

@@ -182,6 +182,19 @@ class WebAccountStoreTests(unittest.TestCase):
         self.assertIn("百度网页搜索", html)
         self.assertIn("summary.public_news_real_count", javascript)
 
+    def test_review_ui_marks_body_failures_and_unknown_publication_time(self):
+        html = (web_app.WEB_DIR / "index.html").read_text(encoding="utf-8")
+        javascript = (web_app.WEB_DIR / "static" / "app.js").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn('id="reviewStatusFilter"', html)
+        self.assertIn('<option value="pending">待人工核查</option>', html)
+        self.assertIn('item.body_fetch_status === "failed"', javascript)
+        self.assertIn("待人工核查：正文获取失败", javascript)
+        self.assertIn("body_verified:", javascript)
+        self.assertIn('if (!value) return "时间未知";', javascript)
+
     def test_task_payload_summary_never_copies_account_credentials(self):
         summary = web_app.task_payload_summary(
             {

@@ -50,6 +50,7 @@ from src.record_analysis import (
     SENTIMENT_LABELS,
     annotate_records,
     apply_human_review,
+    body_review_is_pending,
 )
 from src.sensitive_artifacts import DiagnosticSnapshotStore
 from src.social_browser import (
@@ -1268,6 +1269,7 @@ def build_reviewed_records(data: list, decisions: list, reviewer: str = "", revi
             note=decision.get("note", ""),
             reviewer=reviewer,
             reviewed_at=timestamp,
+            body_verified=decision.get("body_verified") is True,
         )
         human_review = merged.get("human_review") or {}
         category_changed_count += int(bool(human_review.get("category_changed")))
@@ -1299,6 +1301,7 @@ def review_is_complete(data: list, meta: dict) -> bool:
         review.get("reviewed_at")
         and review.get("labels_confirmed")
         and kept_total == len(data)
+        and not any(body_review_is_pending(record) for record in data)
     )
 
 
@@ -1310,22 +1313,33 @@ def filter_report_records(data: list, report_filter) -> tuple[list, dict]:
         raise ValueError("报告数据范围格式无效")
 
     normalized = {}
-    for key in ("source", "category", "sentiment"):
+    for key in ("source", "category", "sentiment", "review_status"):
         value = str(report_filter.get(key) or "").strip()
         if len(value) > 100:
             raise ValueError("报告数据范围条件过长")
         normalized[key] = value
+    if normalized["review_status"] not in {"", "pending", "checked", "normal"}:
+        raise ValueError("正文核查状态无效")
 
     filtered = []
     for record in data:
         source = str(record.get("platform") or record.get("source") or "未知")
         category = str(record.get("content_category") or "其他")
         sentiment = str(record.get("sentiment_label") or "中性")
+        review_status = (
+            "pending"
+            if body_review_is_pending(record)
+            else "checked"
+            if record.get("body_fetch_status") == "failed"
+            else "normal"
+        )
         if normalized["source"] and source != normalized["source"]:
             continue
         if normalized["category"] and category != normalized["category"]:
             continue
         if normalized["sentiment"] and sentiment != normalized["sentiment"]:
+            continue
+        if normalized["review_status"] and review_status != normalized["review_status"]:
             continue
         filtered.append(record)
 
@@ -1407,7 +1421,9 @@ def select_summary_records(data: list, payload: dict) -> tuple[list, dict]:
             raise ValueError("请选择需要摘要的线索") from None
         if index < 0 or index >= len(data):
             raise ValueError("需要摘要的线索不存在或已经变化")
-        return [data[index]], {
+        selected = [data[index]]
+        _require_completed_summary_body_reviews(selected)
+        return selected, {
             "type": "record",
             "label": "单条线索",
             "record_index": index,
@@ -1427,6 +1443,7 @@ def select_summary_records(data: list, payload: dict) -> tuple[list, dict]:
         ]
         if not matched:
             raise ValueError("当前来源没有可用数据")
+        _require_completed_summary_body_reviews(matched)
         return matched, {
             "type": "source",
             "label": f"来源“{source}”",
@@ -1437,6 +1454,7 @@ def select_summary_records(data: list, payload: dict) -> tuple[list, dict]:
 
     if scope_type == "filtered":
         matched, filter_scope = filter_report_records(data, payload.get("report_filter"))
+        _require_completed_summary_body_reviews(matched)
         return matched, {
             **filter_scope,
             "type": "filtered",
@@ -1444,6 +1462,14 @@ def select_summary_records(data: list, payload: dict) -> tuple[list, dict]:
         }
 
     raise ValueError("请选择单条、单来源或当前筛选结果进行摘要")
+
+
+def _require_completed_summary_body_reviews(records: list) -> None:
+    pending_count = sum(1 for record in records if body_review_is_pending(record))
+    if pending_count:
+        raise ValueError(
+            f"有 {pending_count} 条记录正文获取失败，请先完成人工核查再生成摘要"
+        )
 
 
 

@@ -245,7 +245,7 @@ class Renderer:
             meta.paragraph_format.space_after = Pt(3)
             meta.paragraph_format.keep_with_next = True
             meta.add_run("发布时间：").bold = True
-            meta.add_run(str(sample.get("pub_time") or "-"))
+            meta.add_run(str(sample.get("pub_time") or "时间未知"))
 
             analysis = doc.add_paragraph()
             analysis.paragraph_format.space_after = Pt(3)

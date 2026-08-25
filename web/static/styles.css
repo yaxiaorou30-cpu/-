@@ -1923,7 +1923,7 @@ textarea::placeholder {
 
 .review-filters {
   display: grid;
-  grid-template-columns: repeat(3, minmax(150px, 220px)) auto 1fr;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   align-items: end;
   gap: 10px;
   padding: 14px 20px;
@@ -2342,6 +2342,23 @@ td a {
 
 .review-machine-hint.pending {
   color: var(--amber-700);
+}
+
+.review-body-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--ink-100);
+  color: var(--amber-700);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.review-body-check input {
+  margin-top: 2px;
+  accent-color: var(--amber-700);
 }
 
 .review-note {

@@ -214,6 +214,16 @@ def annotate_records(records: Iterable[Dict]) -> List[Dict]:
     return [annotate_record(record) for record in records if isinstance(record, dict)]
 
 
+def body_review_is_pending(record: Dict) -> bool:
+    if not isinstance(record, dict) or record.get("body_fetch_status") != "failed":
+        return False
+    review = record.get("body_manual_review")
+    return not (
+        isinstance(review, dict)
+        and str(review.get("reviewed_at") or "").strip()
+    )
+
+
 def apply_human_review(
     record: Dict,
     *,
@@ -222,6 +232,7 @@ def apply_human_review(
     note: str = "",
     reviewer: str = "",
     reviewed_at: str = "",
+    body_verified: bool = False,
 ) -> Dict:
     annotated = annotate_record(record)
     category = _valid_category(content_category)
@@ -232,6 +243,13 @@ def apply_human_review(
         raise ValueError("请选择有效的情感标签")
 
     timestamp = reviewed_at or datetime.now().isoformat(timespec="seconds")
+    if body_review_is_pending(annotated) and body_verified is not True:
+        raise ValueError("正文获取失败，请先打开原文完成人工核查，或取消保留该记录")
+    if annotated.get("body_fetch_status") == "failed" and body_verified is True:
+        annotated["body_manual_review"] = {
+            "reviewed_at": timestamp,
+            "reviewed_by": _clean_text(reviewer)[:64],
+        }
     annotated["human_review"] = {
         "content_category": category,
         "sentiment_label": sentiment,

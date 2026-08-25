@@ -83,6 +83,18 @@ class EvidenceSummaryTests(unittest.TestCase):
                 "record_index": 3,
             })
 
+    def test_pending_body_review_cannot_be_used_for_summary(self):
+        record = {
+            **self._record(),
+            "body_fetch_status": "failed",
+        }
+
+        with self.assertRaisesRegex(ValueError, "正文获取失败"):
+            select_summary_records([record], {
+                "scope_type": "record",
+                "record_index": 0,
+            })
+
 
 if __name__ == "__main__":
     unittest.main()
