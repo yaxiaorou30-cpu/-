@@ -4610,10 +4610,13 @@ class NewsCrawler:
 
         real_ratio = round(real_count / total, 2) if total else 0
         reached_min_real = real_count >= min_real_results
+        active_source_groups = self._active_source_groups(source_strategy)
         quality_assessment = build_collection_assessment(data, {
             "min_real_results": min_real_results,
+            "source_strategy": source_strategy,
             "social_platforms": platforms,
             "stable_sources": stable_sources or [],
+            "active_source_groups": active_source_groups,
             "failures": failures,
         })
         if source_acceptance:
@@ -4635,7 +4638,7 @@ class NewsCrawler:
             "time_range": time_range,
             "collect_level": collect_level,
             "source_strategy": source_strategy,
-            "active_source_groups": self._active_source_groups(source_strategy),
+            "active_source_groups": active_source_groups,
             "source_acceptance_mode": bool(source_acceptance),
             "acceptance_scope": (
                 "source_connectivity_and_parse" if source_acceptance else ""

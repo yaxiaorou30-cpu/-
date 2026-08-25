@@ -23,6 +23,16 @@ COLLECTION_STATUS_LABELS = {
     "collection_failed": "采集失败",
 }
 
+_SOURCE_GROUPS = {"stable", "public_news", "social"}
+_SOURCE_STRATEGY_ALIASES = {
+    "hybrid": "all",
+    "stable_first": "all",
+    "stable-first": "all",
+    "stablefirst": "all",
+    "public_first": "all",
+    "public": "stable",
+}
+
 
 def build_collection_assessment(raw_data: List[dict], meta: Optional[dict] = None) -> Dict:
     """根据实际记录和任务条件生成统一检查清单。"""
@@ -45,6 +55,7 @@ def build_collection_assessment(raw_data: List[dict], meta: Optional[dict] = Non
 
     selected_social = _unique_strings(meta.get("social_platforms") or meta.get("platforms") or [])
     selected_stable = _unique_strings(meta.get("stable_sources") or [])
+    active_source_groups = _resolve_active_source_groups(meta)
     failures = [item for item in meta.get("failures", []) if isinstance(item, dict)]
     minimum_real = max(1, _safe_int(meta.get("min_real_results"), 3))
 
@@ -58,15 +69,19 @@ def build_collection_assessment(raw_data: List[dict], meta: Optional[dict] = Non
     valid_time_rate = valid_time_count / total if total else 0.0
     duplicate_rate = duplicate_title_count / total if total else 0.0
 
-    checks = [
-        _real_data_check(real_count, mock_count, minimum_real),
-        _platform_coverage_check(
-            selected_social=selected_social,
-            covered_social=covered_social,
-            platform_distribution=platform_distribution,
-            social_count=social_count,
-        ),
-        _government_source_check(stable_count, selected_stable),
+    checks = [_real_data_check(real_count, mock_count, minimum_real)]
+    if active_source_groups is None or "social" in active_source_groups:
+        checks.append(
+            _platform_coverage_check(
+                selected_social=selected_social,
+                covered_social=covered_social,
+                platform_distribution=platform_distribution,
+                social_count=social_count,
+            )
+        )
+    if active_source_groups is None or "stable" in active_source_groups:
+        checks.append(_government_source_check(stable_count, selected_stable))
+    checks.extend([
         _rate_check(
             check_id="source_links",
             label="原文链接",
@@ -81,7 +96,7 @@ def build_collection_assessment(raw_data: List[dict], meta: Optional[dict] = Non
         _content_check(total, empty_content_count),
         _duplicate_check(total, duplicate_title_count, duplicate_rate),
         _failure_check(failures, real_count),
-    ]
+    ])
 
     critical_failed = any(
         item["status"] == "fail"
@@ -465,6 +480,27 @@ def _unique_strings(values) -> List[str]:
         if text and text not in result:
             result.append(text)
     return result
+
+
+def _resolve_active_source_groups(meta: dict) -> Optional[set]:
+    raw_groups = meta.get("active_source_groups")
+    if isinstance(raw_groups, list) and raw_groups:
+        groups = [str(value or "").strip().lower() for value in raw_groups]
+        if groups and all(group in _SOURCE_GROUPS for group in groups):
+            return set(groups)
+
+    task_payload = meta.get("task_payload")
+    payload_strategy = (
+        task_payload.get("source_strategy") if isinstance(task_payload, dict) else ""
+    )
+    for value in (meta.get("source_strategy"), payload_strategy):
+        strategy = str(value or "").strip().lower()
+        strategy = _SOURCE_STRATEGY_ALIASES.get(strategy, strategy)
+        if strategy == "all":
+            return set(_SOURCE_GROUPS)
+        if strategy in _SOURCE_GROUPS:
+            return {strategy}
+    return None
 
 
 def _safe_int(value, default: int) -> int:

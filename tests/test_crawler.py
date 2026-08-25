@@ -268,6 +268,11 @@ class CrawlerParsingTests(unittest.TestCase):
             ],
         )
         self.assertEqual(len(records), 1)
+        quality = self.crawler.last_meta["quality_assessment"]
+        check_ids = {item["id"] for item in quality["checks"]}
+        self.assertNotIn("social_platforms", check_ids)
+        self.assertNotIn("government_sources", check_ids)
+        self.assertNotEqual(quality["status_code"], "collection_failed")
 
     def test_public_news_limit_keeps_bing_and_baidu_coverage(self):
         def fake_collect(**kwargs):
