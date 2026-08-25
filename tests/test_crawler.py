@@ -124,6 +124,24 @@ class CrawlerParsingTests(unittest.TestCase):
         self.assertEqual(items[0]["pub_time"], "Sat, 22 Aug 2026 12:10:11 GMT")
         self.assertTrue(all(item["search_origin"] == "bing_news_rss" for item in items))
 
+    def test_bing_candidates_with_same_summary_are_enriched_before_body_dedup(self):
+        rss = """<?xml version="1.0" encoding="utf-8"?>
+        <rss version="2.0"><channel>
+          <item><title>候选一</title><link>https://one.example.com/a</link>
+            <description>搜索来源返回的相同摘要</description></item>
+          <item><title>候选二</title><link>https://two.example.com/b</link>
+            <description>搜索来源返回的相同摘要</description></item>
+        </channel></rss>"""
+
+        items = self.crawler._parse_bing_news_rss(
+            rss,
+            keyword="公开信息",
+            platform="Bing 新闻",
+            channel="Bing News RSS",
+        )
+
+        self.assertEqual(len(items), 2)
+
     def test_bing_news_rss_collection_enriches_each_original_article(self):
         fixture = self._bing_news_rss_fixture().replace(
             "第一条新闻的公开摘要。",
@@ -1629,7 +1647,7 @@ class CrawlerPolicyTests(unittest.TestCase):
                 raise RuntimeError("government source failure")
             return [{
                 "title": f"{source_group} 仍可采集",
-                "content": "另一来源组不受影响。",
+                "content": f"{source_group} 来源组不受其他来源失败影响。",
                 "url": f"https://example.com/{source_group}",
                 "platform": "微博" if source_group == "social" else "Bing 新闻",
                 "source": "测试来源",
@@ -2244,6 +2262,62 @@ class CrawlerPolicyTests(unittest.TestCase):
         deduped = self.crawler._deduplicate_results(records)
         self.assertEqual(len(deduped), 2)
         self.assertEqual(deduped[0]["content"], "更完整的正文内容")
+
+    def test_deduplicate_same_body_across_different_urls(self):
+        records = [
+            {
+                "url": "https://first.example.com/article",
+                "title": "转载标题一",
+                "content": "这是两个网页完全相同的正文内容。",
+            },
+            {
+                "url": "https://second.example.com/repost",
+                "title": "转载标题二",
+                "content": "这是两个网页完全相同的正文内容。",
+            },
+        ]
+
+        deduped = self.crawler._deduplicate_results(records)
+
+        self.assertEqual(len(deduped), 1)
+        self.assertEqual(deduped[0]["url"], "https://first.example.com/article")
+
+    def test_deduplicate_keeps_different_bodies_with_same_prefix(self):
+        shared_prefix = "相同开头" * 80
+        records = [
+            {
+                "url": "https://example.com/a",
+                "title": "标题一",
+                "content": f"{shared_prefix}正文结尾甲",
+            },
+            {
+                "url": "https://example.com/b",
+                "title": "标题二",
+                "content": f"{shared_prefix}正文结尾乙",
+            },
+        ]
+
+        deduped = self.crawler._deduplicate_results(records)
+
+        self.assertEqual(len(deduped), 2)
+
+    def test_deduplicate_does_not_treat_failed_body_snippet_as_full_text(self):
+        records = [
+            {
+                "url": "https://example.com/a",
+                "content": "搜索接口返回的相同摘要",
+                "body_fetch_status": "failed",
+            },
+            {
+                "url": "https://example.com/b",
+                "content": "搜索接口返回的相同摘要",
+                "body_fetch_status": "failed",
+            },
+        ]
+
+        deduped = self.crawler._deduplicate_results(records)
+
+        self.assertEqual(len(deduped), 2)
 
     def test_parse_relative_times(self):
         now = datetime.now()

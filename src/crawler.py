@@ -3448,7 +3448,7 @@ class NewsCrawler:
         except Exception as e:
             logger.warning(f"{platform} 解析失败: {e}")
 
-        return self._deduplicate_results(results)
+        return self._deduplicate_results(results, deduplicate_content=False)
 
     def _parse_bing_news_rss(
         self,
@@ -3537,7 +3537,7 @@ class NewsCrawler:
                 "keyword": keyword,
             })
 
-        return self._deduplicate_results(results)
+        return self._deduplicate_results(results, deduplicate_content=False)
 
     def _parse_official_listing(
         self,
@@ -4381,25 +4381,55 @@ class NewsCrawler:
         host = urlparse(url or "").netloc.lower().split(":", 1)[0]
         return host == "gov.cn" or host.endswith(".gov.cn")
 
-    def _deduplicate_results(self, records: List[Dict]) -> List[Dict]:
-        """按 URL 和内容指纹去重，优先保留正文更完整的记录。"""
-        best_by_key = {}
-        order = []
+    def _deduplicate_results(
+        self,
+        records: List[Dict],
+        *,
+        deduplicate_content: bool = True,
+    ) -> List[Dict]:
+        """先按 URL 合并，再按完整正文精确去重。"""
+        by_url = []
+        url_positions = {}
         for record in records:
             url = self._normalize_url(record.get("url", ""), "")
-            text = self._clean_text((record.get("title", "") + record.get("content", ""))[:300])
-            fingerprint = re.sub(r"\W+", "", text.lower())[:120]
-            key = url or fingerprint
-            if not key:
+            if not url or url not in url_positions:
+                if url:
+                    url_positions[url] = len(by_url)
+                by_url.append(record)
                 continue
-            if key not in best_by_key:
-                order.append(key)
-                best_by_key[key] = record
+            index = url_positions[url]
+            existing = by_url[index]
+            if self._record_content_quality(record) > self._record_content_quality(existing):
+                by_url[index] = record
+
+        if not deduplicate_content:
+            return by_url
+
+        deduplicated = []
+        content_positions = {}
+        for record in by_url:
+            content = self._clean_text(record.get("content", ""))
+            can_merge_content = bool(
+                content and record.get("body_fetch_status") != "failed"
+            )
+            if not can_merge_content or content not in content_positions:
+                if can_merge_content:
+                    content_positions[content] = len(deduplicated)
+                deduplicated.append(record)
                 continue
-            existing = best_by_key[key]
-            if len(record.get("content", "")) > len(existing.get("content", "")):
-                best_by_key[key] = record
-        return [best_by_key[k] for k in order]
+            index = content_positions[content]
+            if self._record_content_quality(record) > self._record_content_quality(
+                deduplicated[index]
+            ):
+                deduplicated[index] = record
+        return deduplicated
+
+    @staticmethod
+    def _record_content_quality(record: Dict) -> Tuple[int, int]:
+        return (
+            int(record.get("body_fetch_status") == "success"),
+            len(str(record.get("content") or "")),
+        )
 
     @staticmethod
     def _limit_results_with_platform_coverage(
