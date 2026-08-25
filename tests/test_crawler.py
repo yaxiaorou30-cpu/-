@@ -207,6 +207,62 @@ class CrawlerParsingTests(unittest.TestCase):
         )
         self.assertEqual(len(records), 1)
 
+    def test_baidu_qianfan_results_use_common_article_enrichment_chain(self):
+        calls = []
+
+        class FakeBaiduAdapter:
+            def search(self, query, *, top_k, keyword):
+                calls.append((query, top_k, keyword))
+                return SimpleNamespace(
+                    error="",
+                    items=[{
+                        "title": "普通博客公开文章",
+                        "content": "搜索接口返回的相关片段",
+                        "url": "https://blog.example.com/public-post",
+                        "source": "示例博客",
+                        "pub_time": "",
+                        "search_origin": "baidu_qianfan_web_search",
+                        "keyword": keyword,
+                    }],
+                )
+
+        crawler = NewsCrawler(baidu_web_search_adapter=FakeBaiduAdapter())
+        crawler.anti_crawl.delay = lambda *args, **kwargs: None
+        enriched_urls = []
+
+        def enrich(record):
+            enriched_urls.append(record["url"])
+            record["content"] = "正文采集链获得的完整博客正文"
+            record["detail_source"] = "scrapling_stealth"
+
+        crawler._enrich_with_article_content = enrich
+        request = next(
+            item
+            for item in crawler._build_public_news_source_requests(
+                keyword="普通博客",
+                province=None,
+                city=None,
+            )
+            if item["parser"] == "baidu_qianfan_web_search"
+        )
+
+        records, failures = crawler._collect_from_source_requests(
+            source_requests=[request],
+            keyword="普通博客",
+            region="全国",
+            collect_level="最小采集",
+            start_time=None,
+            end_time=None,
+            remaining=2,
+        )
+
+        self.assertEqual(failures, [])
+        self.assertEqual(calls, [("普通博客", 2, "普通博客")])
+        self.assertEqual(enriched_urls, ["https://blog.example.com/public-post"])
+        self.assertEqual(records[0]["content"], "正文采集链获得的完整博客正文")
+        self.assertEqual(records[0]["detail_source"], "scrapling_stealth")
+        self.assertEqual(records[0]["source_group"], "public_news")
+
     def test_bing_news_rss_deduplicates_wrappers_for_same_article(self):
         rss = """<?xml version="1.0" encoding="utf-8"?>
         <rss version="2.0"><channel>
