@@ -207,6 +207,43 @@ class CrawlerParsingTests(unittest.TestCase):
         )
         self.assertEqual(len(records), 1)
 
+    def test_public_news_limit_keeps_bing_and_baidu_coverage(self):
+        def fake_collect(**kwargs):
+            request = kwargs["source_requests"][0]
+            if request["parser"] == "bing_news_rss":
+                return ([{
+                    "title": f"Bing 结果 {index}",
+                    "content": f"Bing 公开新闻内容 {index}",
+                    "url": f"https://news.example.com/{index}",
+                    "platform": "Bing 新闻",
+                    "source_group": "public_news",
+                    "data_type": "real",
+                } for index in range(2)], [])
+            return ([{
+                "title": "百度网页结果",
+                "content": "百度公开网页内容",
+                "url": "https://blog.example.com/public-post",
+                "platform": "百度网页",
+                "source_group": "public_news",
+                "data_type": "real",
+            }], [])
+
+        self.crawler._collect_source_requests_safely = fake_collect
+
+        records = self.crawler.crawl(
+            ["公开信息"],
+            max_results=2,
+            collect_level="最小采集",
+            source_strategy="public_news",
+            min_real_results=0,
+        )
+
+        self.assertEqual(len(records), 2)
+        self.assertEqual(
+            {item["platform"] for item in records},
+            {"Bing 新闻", "百度网页"},
+        )
+
     def test_baidu_qianfan_results_use_common_article_enrichment_chain(self):
         calls = []
 

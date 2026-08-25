@@ -93,6 +93,28 @@ class BaiduWebSearchAdapterTests(unittest.TestCase):
         self.assertEqual(record["keyword"], "公开信息")
 
     @patch.dict(os.environ, {"BAIDU_QIANFAN_API_KEY": TEST_API_KEY}, clear=True)
+    def test_skips_malformed_url_without_losing_other_references(self):
+        session = FakeSession({
+            "references": [{
+                "type": "web",
+                "title": "损坏的网址",
+                "url": "http://[invalid",
+            }, {
+                "type": "web",
+                "title": "有效网页",
+                "url": "https://example.com/valid",
+            }],
+        })
+
+        outcome = BaiduWebSearchAdapter(session=session).search("公开信息", top_k=2)
+
+        self.assertFalse(outcome.error)
+        self.assertEqual(
+            [item["url"] for item in outcome.items],
+            ["https://example.com/valid"],
+        )
+
+    @patch.dict(os.environ, {"BAIDU_QIANFAN_API_KEY": TEST_API_KEY}, clear=True)
     def test_bearer_secret_is_not_exposed_in_outcome_or_error(self):
         success = BaiduWebSearchAdapter(
             session=FakeSession({"references": []}),

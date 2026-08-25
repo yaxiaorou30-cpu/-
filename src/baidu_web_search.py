@@ -163,14 +163,18 @@ def _map_reference(reference: Any, keyword: str) -> dict | None:
     if reference.get("type") not in (None, "", "web"):
         return None
     url = str(reference.get("url") or "").strip()
-    parsed = urlparse(url)
-    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+    try:
+        parsed = urlparse(url)
+        hostname = parsed.hostname
+    except ValueError:
+        return None
+    if parsed.scheme not in {"http", "https"} or not hostname:
         return None
     if parsed.username or parsed.password:
         return None
 
     title = str(reference.get("title") or reference.get("web_anchor") or url).strip()
-    source = str(reference.get("website") or parsed.hostname).strip()
+    source = str(reference.get("website") or hostname).strip()
     content = str(reference.get("content") or reference.get("snippet") or "").strip()
     return {
         "title": title,

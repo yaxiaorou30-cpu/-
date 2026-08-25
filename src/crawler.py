@@ -604,6 +604,11 @@ class NewsCrawler:
                                 f"公开网页/新闻来源 '{public_request['channel']}' "
                                 f"关键词 '{keyword}' 新增 {len(collected)} 条"
                             )
+                    group_results["public_news"] = self._limit_results_with_platform_coverage(
+                        records=group_results["public_news"],
+                        max_results=target_count,
+                        platforms=[source["platform"] for source in PUBLIC_DISCOVERY_SOURCES],
+                    )
 
                 if source_strategy in ("all", "social"):
                     social_results_by_platform = {platform: [] for platform in social_platforms}
