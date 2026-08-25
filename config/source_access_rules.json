@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-08-23",
+  "updated_at": "2026-08-25",
   "robots_cache_ttl_seconds": 21600,
   "default_rule": {
     "id": "SRC-UNREGISTERED",
@@ -34,6 +34,25 @@
       "owner": "项目技术负责人（待指定姓名）",
       "last_rule_check": "2026-08-23",
       "allowed_paths": ["/news/search", "/robots.txt"],
+      "allowed_path_prefixes": [],
+      "denied_path_prefixes": []
+    },
+    {
+      "id": "SRC-PUBLIC-BAIDU-QIANFAN",
+      "name": "百度千帆网页搜索 API",
+      "domains": ["qianfan.baidubce.com"],
+      "access_type": "A0",
+      "support_level": "S2",
+      "automation_enabled": false,
+      "automation_reason": "仅允许通过操作者配置的 API Key 调用官方搜索 API",
+      "robots_required": true,
+      "external_adapter_allowed": true,
+      "external_adapter_robots_required": false,
+      "external_adapter_reason": "使用操作者配置的 API Key 调用百度千帆官方只读搜索接口",
+      "platform_rule_status": "2026-08-25 已按官方 API 文档登记；真实接口结果待本机冒烟验证",
+      "owner": "项目技术负责人（待指定姓名）",
+      "last_rule_check": "2026-08-25",
+      "allowed_paths": ["/v2/ai_search/web_search"],
       "allowed_path_prefixes": [],
       "denied_path_prefixes": []
     },

@@ -50,6 +50,10 @@ from src.external_content_adapters import (
 )
 from src.sensitive_artifacts import DiagnosticSnapshotStore
 from src.quality_checks import build_collection_assessment
+from src.baidu_web_search import (
+    BAIDU_WEB_SEARCH_ENDPOINT,
+    BaiduWebSearchAdapter,
+)
 from src.source_policy import (
     AUTHORIZED_SESSION_ACCESS_MODE,
     EXTERNAL_ADAPTER_ACCESS_MODE,
@@ -218,6 +222,15 @@ PUBLIC_NEWS_SOURCE = {
     "url": "https://www.bing.com/news/search",
     "timeout": 12,
 }
+BAIDU_WEB_SEARCH_SOURCE = {
+    "name": "百度网页搜索",
+    "platform": "百度网页",
+    "parser": "baidu_qianfan_web_search",
+    "source_group": "public_news",
+    "url": BAIDU_WEB_SEARCH_ENDPOINT,
+    "timeout": 20,
+}
+PUBLIC_DISCOVERY_SOURCES = (PUBLIC_NEWS_SOURCE, BAIDU_WEB_SEARCH_SOURCE)
 SOCIAL_ENHANCEMENT_PLATFORMS = {
     "微博",
     "知乎",
@@ -368,6 +381,7 @@ class NewsCrawler:
         live_login_probe: Optional[Callable[[str, int], Dict]] = None,
         site_session_resolver: Optional[Callable[[str], Optional[Dict]]] = None,
         site_session_status_recorder: Optional[Callable[[str, bool, str], None]] = None,
+        baidu_web_search_adapter: Optional[BaiduWebSearchAdapter] = None,
     ):
         self.session = requests.Session() if CRAWLER_AVAILABLE else None
         if self.session:
@@ -383,6 +397,9 @@ class NewsCrawler:
         self.live_login_probe = live_login_probe
         self.site_session_resolver = site_session_resolver
         self.site_session_status_recorder = site_session_status_recorder
+        self.baidu_web_search_adapter = baidu_web_search_adapter or (
+            BaiduWebSearchAdapter(session=self.session) if self.session else None
+        )
         self._site_session_failed_versions = set()
         self._site_session_statuses: Dict[Tuple[str, str], bool] = {}
         self.source_policy = source_policy or SourceAccessPolicy(
@@ -483,7 +500,7 @@ class NewsCrawler:
         logger.info(
             f"采集等级: {collect_level}, 最大结果: {target_count}, "
             f"数据源策略: {source_strategy}, 稳定源={stable_source_names}, "
-            f"公开新闻={PUBLIC_NEWS_SOURCE['name']}, "
+            f"公开网页/新闻={[source['name'] for source in PUBLIC_DISCOVERY_SOURCES]}, "
             f"社交增强={social_platforms}"
         )
         self._emit_progress(progress_callback, {
@@ -492,7 +509,7 @@ class NewsCrawler:
             "keywords": keywords,
             "source_strategy": source_strategy,
             "stable_sources": stable_source_names,
-            "public_news_sources": [PUBLIC_NEWS_SOURCE["name"]],
+            "public_news_sources": [source["name"] for source in PUBLIC_DISCOVERY_SOURCES],
             "social_platforms": social_platforms,
         })
 
@@ -568,25 +585,25 @@ class NewsCrawler:
                             province=province,
                             city=city,
                         )
-                        collected, source_failures = self._collect_source_requests_safely(
-                            source_requests=public_news_requests,
-                            keyword=keyword,
-                            region=region or "全国",
-                            collect_level=collect_level,
-                            start_time=start_time,
-                            end_time=end_time,
-                            remaining=max(
-                                target_count - len(group_results["public_news"]), 0
-                            ),
-                            progress_callback=progress_callback,
-                        )
-                        group_results["public_news"] = self._deduplicate_results(
-                            group_results["public_news"] + collected
-                        )
-                        failures.extend(source_failures)
-                        logger.info(f"公开新闻关键词 '{keyword}' 新增 {len(collected)} 条")
-                        if len(group_results["public_news"]) >= target_count:
-                            break
+                        for public_request in public_news_requests:
+                            collected, source_failures = self._collect_source_requests_safely(
+                                source_requests=[public_request],
+                                keyword=keyword,
+                                region=region or "全国",
+                                collect_level=collect_level,
+                                start_time=start_time,
+                                end_time=end_time,
+                                remaining=target_count,
+                                progress_callback=progress_callback,
+                            )
+                            group_results["public_news"] = self._deduplicate_results(
+                                group_results["public_news"] + collected
+                            )
+                            failures.extend(source_failures)
+                            logger.info(
+                                f"公开网页/新闻来源 '{public_request['channel']}' "
+                                f"关键词 '{keyword}' 新增 {len(collected)} 条"
+                            )
 
                 if source_strategy in ("all", "social"):
                     social_results_by_platform = {platform: [] for platform in social_platforms}
@@ -2738,7 +2755,7 @@ class NewsCrawler:
         province: Optional[str],
         city: Optional[str],
     ) -> List[Dict]:
-        """生成公开新闻发现请求；结果数量由统一 collector 限制。"""
+        """生成彼此独立的公开网页/新闻发现请求。"""
         query = self._build_search_query(keyword, province, city)
         params = urlencode({
             "q": query,
@@ -2752,6 +2769,14 @@ class NewsCrawler:
             "parser": PUBLIC_NEWS_SOURCE["parser"],
             "url": f"{PUBLIC_NEWS_SOURCE['url']}?{params}",
             "timeout": PUBLIC_NEWS_SOURCE["timeout"],
+        }, {
+            "channel": BAIDU_WEB_SEARCH_SOURCE["name"],
+            "platform": BAIDU_WEB_SEARCH_SOURCE["platform"],
+            "source_group": BAIDU_WEB_SEARCH_SOURCE["source_group"],
+            "parser": BAIDU_WEB_SEARCH_SOURCE["parser"],
+            "url": BAIDU_WEB_SEARCH_SOURCE["url"],
+            "query": query,
+            "timeout": BAIDU_WEB_SEARCH_SOURCE["timeout"],
         }]
 
     def _build_stable_source_requests(
@@ -2853,9 +2878,10 @@ class NewsCrawler:
             url = request_info["url"]
             platform = request_info["platform"]
             source_group = request_info.get("source_group", "unknown")
+            parser = request_info.get("parser", "")
             source_region = request_info.get("source_region", "")
             auth_context = None
-            external_adapter_enabled = False
+            external_adapter_enabled = parser == "baidu_qianfan_web_search"
             if source_group == "social":
                 auth_context = self._get_social_auth_context(platform, keyword)
                 adapter_supported = bool(
@@ -2901,6 +2927,12 @@ class NewsCrawler:
                             else PUBLIC_CRAWLER_ACCESS_MODE
                         ),
                     )
+            elif parser == "baidu_qianfan_web_search":
+                access_decision = self.source_policy.check(
+                    url,
+                    channel,
+                    access_mode=EXTERNAL_ADAPTER_ACCESS_MODE,
+                )
             else:
                 access_decision = self.source_policy.check(
                     url,
@@ -2954,6 +2986,24 @@ class NewsCrawler:
             adapter_name = ""
             adapter_backend = "html"
             adapter_error = ""
+            structured_request_attempted = False
+
+            if parser == "baidu_qianfan_web_search":
+                structured_request_attempted = True
+                adapter_name = "baidu_qianfan_web_search"
+                adapter_backend = "official_api"
+                if not self.baidu_web_search_adapter:
+                    error = "百度网页搜索适配器不可用"
+                else:
+                    outcome = self.baidu_web_search_adapter.search(
+                        request_info.get("query") or keyword,
+                        top_k=max(remaining - len(records), 1),
+                        keyword=keyword,
+                    )
+                    if outcome.error:
+                        error = outcome.error
+                    else:
+                        parsed_items = outcome.items
 
             if (
                 source_group == "social"
@@ -2993,7 +3043,7 @@ class NewsCrawler:
                         "error": reason,
                     })
 
-            if not parsed_items:
+            if not parsed_items and not structured_request_attempted:
                 html_text, final_url, error = self._request_source_html(
                     url=url,
                     channel=channel,
@@ -3023,6 +3073,26 @@ class NewsCrawler:
                     "type": "source_failure",
                     "message": f"{channel} 请求失败: {error}",
                     **failure,
+                })
+                continue
+
+            if structured_request_attempted and not parsed_items and not error:
+                self._emit_progress(progress_callback, {
+                    "type": "source_success",
+                    "message": f"{channel} 搜索成功但没有结果",
+                    "channel": channel,
+                    "platform": platform,
+                    "source_group": source_group,
+                    "url": url,
+                    "duration_seconds": elapsed,
+                    "parsed_count": 0,
+                    "adapter_backend": adapter_backend,
+                    "adapter_name": adapter_name,
+                    "source_rule_id": access_decision.source_rule_id,
+                    "source_support_level": access_decision.support_level,
+                    "source_access_type": access_decision.access_type,
+                    "platform_rule_status": access_decision.platform_rule_status,
+                    "robots_status": access_decision.robots_status,
                 })
                 continue
 
@@ -4497,7 +4567,7 @@ class NewsCrawler:
             "duration_seconds": round((datetime.now() - started_at).total_seconds(), 2),
             "keywords": keywords,
             "stable_sources": stable_sources or [],
-            "public_news_sources": [PUBLIC_NEWS_SOURCE["name"]],
+            "public_news_sources": [source["name"] for source in PUBLIC_DISCOVERY_SOURCES],
             "social_platforms": platforms,
             "platforms": platforms,
             "region": region,

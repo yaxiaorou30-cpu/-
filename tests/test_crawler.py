@@ -74,8 +74,8 @@ class CrawlerParsingTests(unittest.TestCase):
             city=None,
         )
 
-        self.assertEqual(len(requests), 1)
-        request = requests[0]
+        self.assertEqual(len(requests), 2)
+        request = next(item for item in requests if item["parser"] == "bing_news_rss")
         query = parse_qs(urlparse(request["url"]).query)
         self.assertEqual(query["q"], ["跨来源检索 天津市"])
         self.assertEqual(query["qft"], ['sortbydate="1"'])
@@ -87,6 +87,14 @@ class CrawlerParsingTests(unittest.TestCase):
         self.assertNotIn("setlang", query)
         self.assertNotIn("mkt", query)
         self.assertNotIn("cc", query)
+
+        baidu = next(
+            item for item in requests if item["parser"] == "baidu_qianfan_web_search"
+        )
+        self.assertEqual(baidu["channel"], "百度网页搜索")
+        self.assertEqual(baidu["platform"], "百度网页")
+        self.assertEqual(baidu["source_group"], "public_news")
+        self.assertEqual(baidu["query"], "跨来源检索 天津市")
 
     def test_bing_news_rss_parser_returns_distinct_original_article_urls(self):
         previous_parser = self.crawler._active_parser_hint
@@ -135,12 +143,16 @@ class CrawlerParsingTests(unittest.TestCase):
             record["detail_source"] = "scrapling_stealth"
 
         self.crawler._enrich_with_article_content = record_detail_enrichment
+        public_requests = self.crawler._build_public_news_source_requests(
+            keyword="公开新闻",
+            province=None,
+            city=None,
+        )
+        bing_request = next(
+            item for item in public_requests if item["parser"] == "bing_news_rss"
+        )
         records, failures = self.crawler._collect_from_source_requests(
-            source_requests=self.crawler._build_public_news_source_requests(
-                keyword="公开新闻",
-                province=None,
-                city=None,
-            ),
+            source_requests=[bing_request],
             keyword="公开新闻",
             region="全国",
             collect_level="最小采集",
@@ -158,6 +170,42 @@ class CrawlerParsingTests(unittest.TestCase):
         self.assertTrue(all(datetime.fromisoformat(item["pub_time"]) for item in records))
         self.assertEqual(set(enriched_urls), {item["url"] for item in records})
         self.assertTrue(all(item["detail_source"] == "scrapling_stealth" for item in records))
+
+    def test_public_news_attempts_every_keyword_and_discovery_source_before_limiting(self):
+        calls = []
+
+        def fake_collect(**kwargs):
+            request = kwargs["source_requests"][0]
+            keyword = kwargs["keyword"]
+            calls.append((keyword, request["parser"]))
+            return ([{
+                "title": f"{keyword}-{request['parser']}",
+                "content": "公开网页候选内容",
+                "url": f"https://example.com/{len(calls)}",
+                "source_group": "public_news",
+                "data_type": "real",
+            }], [])
+
+        self.crawler._collect_source_requests_safely = fake_collect
+
+        records = self.crawler.crawl(
+            ["关键词一", "关键词二"],
+            max_results=1,
+            collect_level="最小采集",
+            source_strategy="public_news",
+            min_real_results=0,
+        )
+
+        self.assertEqual(
+            calls,
+            [
+                ("关键词一", "bing_news_rss"),
+                ("关键词一", "baidu_qianfan_web_search"),
+                ("关键词二", "bing_news_rss"),
+                ("关键词二", "baidu_qianfan_web_search"),
+            ],
+        )
+        self.assertEqual(len(records), 1)
 
     def test_bing_news_rss_deduplicates_wrappers_for_same_article(self):
         rss = """<?xml version="1.0" encoding="utf-8"?>

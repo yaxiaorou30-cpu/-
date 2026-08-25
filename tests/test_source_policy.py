@@ -380,6 +380,22 @@ class SourceAccessPolicyTests(unittest.TestCase):
         self.assertEqual(allowed.support_level, "S2")
         self.assertEqual(unrelated.code, "path_not_registered")
 
+    def test_production_registry_allows_baidu_qianfan_search_api(self):
+        policy = SourceAccessPolicy(
+            Path("config") / "source_access_rules.json",
+            fetcher=lambda *args, **kwargs: self.fail("official API must not fetch robots.txt"),
+        )
+
+        allowed = policy.check(
+            "https://qianfan.baidubce.com/v2/ai_search/web_search",
+            "百度网页搜索",
+            access_mode=EXTERNAL_ADAPTER_ACCESS_MODE,
+        )
+
+        self.assertTrue(allowed.allowed)
+        self.assertEqual(allowed.source_rule_id, "SRC-PUBLIC-BAIDU-QIANFAN")
+        self.assertEqual(allowed.code, "external_adapter_allowed")
+
 
 if __name__ == "__main__":
     unittest.main()
