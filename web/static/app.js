@@ -206,7 +206,7 @@ const SOURCE_STRATEGY_COPY = {
   stable_first: "全部独立采集（旧任务）",
   hybrid: "全部独立采集（旧任务）",
   stable: "只查政府官网",
-  public_news: "只查公开新闻",
+  public_news: "只查公开网页/新闻",
   social: "只查社交平台",
 };
 
@@ -759,7 +759,7 @@ function updateSourceSummary() {
   const strategy = selectedStrategy();
   const parts = [];
   if (strategy === "all" || strategy === "stable") parts.push(`政府官网 ${stable.length} 个`);
-  if (strategy === "all" || strategy === "public_news") parts.push(`公开新闻 ${publicNews} 个`);
+  if (strategy === "all" || strategy === "public_news") parts.push(`公开网页/新闻 ${publicNews} 个`);
   if (strategy === "all" || strategy === "social") parts.push(`社交平台 ${social.length} 个`);
   els.selectedSourceSummary.textContent = parts.join(" · ") || "尚未选择采集来源";
 }
@@ -1109,7 +1109,7 @@ function showHistoryDetail(item) {
   appendHistoryDetailRow(
     els.historyDetailContent,
     "来源结果",
-    `政府官网 ${summary.stable_real_count || 0} 条 · 公开新闻 ${summary.public_news_real_count || 0} 条 · 社交平台 ${summary.social_real_count || 0} 条`,
+    `政府官网 ${summary.stable_real_count || 0} 条 · 公开网页/新闻 ${summary.public_news_real_count || 0} 条 · 社交平台 ${summary.social_real_count || 0} 条`,
   );
   appendHistoryDetailRow(
     els.historyDetailContent,

@@ -28,7 +28,7 @@ from src.crawler import (
     NewsCrawler,
     PLATFORM_LIST,
     PRIMARY_SOCIAL_PLATFORMS,
-    PUBLIC_NEWS_SOURCE,
+    PUBLIC_DISCOVERY_SOURCES,
     STABLE_SOURCE_REGISTRY,
     TIME_RANGE_MAP,
     crawl_and_save,
@@ -1938,7 +1938,7 @@ class WebUIHandler(BaseHTTPRequestHandler):
         history_catalog = build_history_catalog()
         return {
             "stable_sources": stable_sources,
-            "public_news_sources": [PUBLIC_NEWS_SOURCE["name"]],
+            "public_news_sources": [source["name"] for source in PUBLIC_DISCOVERY_SOURCES],
             "social_platforms": PLATFORM_LIST,
             "primary_social_platforms": PRIMARY_SOCIAL_PLATFORMS,
             "time_ranges": list(TIME_RANGE_MAP.keys()),

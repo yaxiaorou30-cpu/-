@@ -171,11 +171,15 @@ class WebAccountStoreTests(unittest.TestCase):
              patch.object(web_app, "deepseek_configuration_status", return_value={}):
             options = handler.build_options()
 
-        self.assertEqual(options["public_news_sources"], ["Bing News RSS"])
+        self.assertEqual(
+            options["public_news_sources"],
+            ["Bing News RSS", "百度网页搜索"],
+        )
         html = (web_app.WEB_DIR / "index.html").read_text(encoding="utf-8")
         javascript = (web_app.WEB_DIR / "static" / "app.js").read_text(encoding="utf-8")
         self.assertIn('id="publicNewsCount"', html)
-        self.assertIn("公开新闻", html)
+        self.assertIn("公开网页/新闻", html)
+        self.assertIn("百度网页搜索", html)
         self.assertIn("summary.public_news_real_count", javascript)
 
     def test_task_payload_summary_never_copies_account_credentials(self):

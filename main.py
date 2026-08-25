@@ -86,7 +86,7 @@ def main():
                        help="兼容旧参数：等同于 --social-platform")
     parser.add_argument("--source-strategy", default="all",
                        choices=["all", "stable", "public_news", "social", "stable_first", "hybrid"],
-                       help="数据源策略：all=政府官网、Bing 公开新闻和社交平台独立采集；其余值只采集对应来源；stable_first/hybrid 是 all 的兼容别名")
+                       help="数据源策略：all=政府官网、公开网页/新闻和社交平台独立采集；其余值只采集对应来源；stable_first/hybrid 是 all 的兼容别名")
     parser.add_argument("--min-real-results", type=int, default=None,
                        help="最低真实数据条数，低于该值会在 meta 中标记质量风险")
 
@@ -109,7 +109,7 @@ def main():
         print(f"  关键词: {', '.join(args.keywords)}")
         social_platforms = args.social_platform or args.platform
         print(f"  稳定公开源: {', '.join(args.stable_source) if args.stable_source else '全部启用源'}")
-        print("  公开新闻源: Bing News RSS（all/public_news 模式）")
+        print("  公开网页/新闻源: Bing News RSS、百度网页搜索（all/public_news 模式）")
         print(f"  社交增强平台: {', '.join(social_platforms) if social_platforms else '默认'}")
 
         input_file = crawl_and_save(
