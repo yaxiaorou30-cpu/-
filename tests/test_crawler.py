@@ -2382,6 +2382,64 @@ class SiteSessionArticleTests(unittest.TestCase):
         self.assertEqual(browser_calls[0]["exact_domain"], "news.example.com")
         self.assertEqual(json.loads(browser_calls[0]["storage_state_text"]), {"cookies": [], "origins": []})
 
+    def test_plain_article_success_marks_body_success_even_when_time_is_unknown(self):
+        unavailable_scrapling = type(
+            "Scrapling",
+            (),
+            {"is_available": staticmethod(lambda: False)},
+        )()
+        crawler = NewsCrawler(
+            external_content_adapters=type(
+                "Adapters",
+                (),
+                {"scrapling": unavailable_scrapling},
+            )(),
+        )
+        crawler._request_html = lambda url, channel: (self.ARTICLE_HTML, url, None)
+        record = {
+            "url": "https://news.example.com/a",
+            "title": "新闻标题",
+            "content": "搜索摘要" * 100,
+            "pub_time": "",
+            "time_basis": "unknown",
+        }
+
+        crawler._enrich_with_article_content(record)
+
+        self.assertEqual(record["body_fetch_status"], "success")
+        self.assertEqual(record["detail_source"], "ordinary_request")
+        self.assertEqual(record["pub_time"], "")
+        self.assertEqual(record["time_basis"], "unknown")
+        self.assertIn("这是通过网站登录会话读取到的新闻正文", record["content"])
+
+    def test_article_failure_keeps_snippet_and_marks_body_failed(self):
+        unavailable_scrapling = type(
+            "Scrapling",
+            (),
+            {"is_available": staticmethod(lambda: False)},
+        )()
+        crawler = NewsCrawler(
+            external_content_adapters=type(
+                "Adapters",
+                (),
+                {"scrapling": unavailable_scrapling},
+            )(),
+        )
+        crawler._request_html = lambda url, channel: ("", url, "request timeout")
+        record = {
+            "url": "https://news.example.com/a",
+            "title": "新闻标题",
+            "content": "搜索接口返回的摘要",
+            "pub_time": "2026-08-25T10:00:00",
+            "time_basis": "published_time",
+        }
+
+        crawler._enrich_with_article_content(record)
+
+        self.assertEqual(record["body_fetch_status"], "failed")
+        self.assertEqual(record["content"], "搜索接口返回的摘要")
+        self.assertEqual(record["pub_time"], "2026-08-25T10:00:00")
+
     def test_site_session_failure_falls_back_without_forwarding_state_to_scrapling(self):
         scrapling_calls = []
 

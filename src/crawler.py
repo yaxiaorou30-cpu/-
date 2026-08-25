@@ -1017,7 +1017,7 @@ class NewsCrawler:
             return False
 
     @staticmethod
-    def _scrapling_detail_is_usable(detail: Dict) -> bool:
+    def _article_detail_is_usable(detail: Dict) -> bool:
         content = re.sub(r"\s+", " ", str((detail or {}).get("content") or "")).strip()
         if len(content) < 80:
             return False
@@ -4166,6 +4166,7 @@ class NewsCrawler:
 
     def _enrich_with_article_content(self, record: Dict):
         """尝试抓取详情页正文，失败时保留搜索摘要。"""
+        record["body_fetch_status"] = "failed"
         url = record.get("url", "")
         if not url.startswith(("http://", "https://")):
             return
@@ -4239,14 +4240,9 @@ class NewsCrawler:
                             session_version,
                         )
                     detail = self._extract_article_content(rendered_html, rendered_url or url)
-                    if detail.get("content"):
-                        detail["detail_source"] = "site_browser_session"
-                        self._apply_article_detail(record, detail, rendered_url or url)
-                        if (
-                            record.get("detail_enriched")
-                            and record.get("detail_source") == "site_browser_session"
-                        ):
-                            return
+                    detail["detail_source"] = "site_browser_session"
+                    if self._apply_article_detail(record, detail, rendered_url or url):
+                        return
             elif (
                 session_domain_matches
                 and session_key not in self._site_session_failed_versions
@@ -4272,25 +4268,22 @@ class NewsCrawler:
                     final_decision = self.source_policy.check(rendered_url, "article-detail")
                     if final_decision.allowed:
                         detail = self._extract_article_content(rendered_html, rendered_url)
-                        if self._scrapling_detail_is_usable(detail):
+                        if self._article_detail_is_usable(detail):
                             detail["detail_source"] = "scrapling_stealth"
-                            self._apply_article_detail(record, detail, rendered_url)
-                            if (
-                                record.get("detail_enriched")
-                                and record.get("detail_source") == "scrapling_stealth"
-                            ):
+                            if self._apply_article_detail(record, detail, rendered_url):
                                 return
 
         html_text, final_url, error = self._request_html(url, "article-detail")
         if error:
             return
         detail = self._extract_article_content(html_text, final_url or url)
+        detail.setdefault("detail_source", "ordinary_request")
         self._apply_article_detail(record, detail, final_url or url)
 
-    def _apply_article_detail(self, record: Dict, detail: Dict, final_url: str) -> None:
-        original_content_length = len(record.get("content", "") or "")
-        if detail.get("content") and len(detail["content"]) > len(record.get("content", "")):
-            record["content"] = detail["content"][:2000]
+    def _apply_article_detail(self, record: Dict, detail: Dict, final_url: str) -> bool:
+        if not self._article_detail_is_usable(detail):
+            return False
+        record["content"] = detail["content"][:2000]
         if detail.get("title") and len(record.get("title", "")) < 12:
             record["title"] = detail["title"][:160]
         if detail.get("source"):
@@ -4305,9 +4298,10 @@ class NewsCrawler:
                 record["time_basis"] = time_basis
         if final_url:
             record["url"] = self._normalize_url(final_url, "")
-        if detail.get("detail_source") and len(record.get("content", "") or "") > original_content_length:
-            record["detail_enriched"] = True
-            record["detail_source"] = detail["detail_source"]
+        record["body_fetch_status"] = "success"
+        record["detail_enriched"] = True
+        record["detail_source"] = detail.get("detail_source") or "ordinary_request"
+        return True
 
     def _extract_article_content(self, html_text: str, url: str = "") -> Dict:
         """从通用新闻详情页抽取正文、标题、来源、时间。"""
