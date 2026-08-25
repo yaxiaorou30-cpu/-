@@ -947,6 +947,7 @@ class NewsCrawler:
         exact_domain: str,
         *,
         resolve_dns: bool = True,
+        allow_clash_fake_ip: bool = False,
     ) -> str:
         try:
             target = normalize_site_url(url, resolve_dns=False)
@@ -968,7 +969,11 @@ class NewsCrawler:
             return "site session exact domain mismatch"
         if resolve_dns:
             try:
-                normalize_site_url(target["url"], resolve_dns=True)
+                normalize_site_url(
+                    target["url"],
+                    resolve_dns=True,
+                    allow_clash_fake_ip=allow_clash_fake_ip,
+                )
             except ValueError:
                 return "site session public DNS validation failed"
         return ""
@@ -1059,7 +1064,11 @@ class NewsCrawler:
         exact_domain: str = "",
     ) -> Tuple[str, str, Optional[str]]:
         if exact_domain:
-            target_error = self._site_session_url_error(url, exact_domain)
+            target_error = self._site_session_url_error(
+                url,
+                exact_domain,
+                allow_clash_fake_ip=self.use_system_proxy,
+            )
             if target_error:
                 return "", url, target_error
         decision = self.source_policy.check(
@@ -1096,6 +1105,7 @@ class NewsCrawler:
                             _public_websocket_request_target(
                                 websocket.url,
                                 exact_domain=exact_domain,
+                                allow_clash_fake_ip=self.use_system_proxy,
                             )
                             websocket.connect_to_server()
                         except Exception:
@@ -1113,7 +1123,10 @@ class NewsCrawler:
                     try:
                         if exact_domain:
                             try:
-                                _public_http_request_target(request.url)
+                                _public_http_request_target(
+                                    request.url,
+                                    allow_clash_fake_ip=self.use_system_proxy,
+                                )
                             except ValueError:
                                 blocked_site_navigation.append(
                                     "site session public DNS validation failed"
@@ -1440,7 +1453,11 @@ class NewsCrawler:
             if not html.strip() or not BeautifulSoup(html, "html.parser").get_text(" ", strip=True):
                 return "", url, "browser session returned empty page"
             if exact_domain:
-                final_error = self._site_session_url_error(final_url, exact_domain)
+                final_error = self._site_session_url_error(
+                    final_url,
+                    exact_domain,
+                    allow_clash_fake_ip=self.use_system_proxy,
+                )
                 if final_error:
                     return "", final_url, final_error
                 final_decision = self.source_policy.check(

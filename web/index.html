@@ -505,7 +505,7 @@
                 <label class="switch-row">
                   <span>
                     <strong>使用系统代理</strong>
-                    <small>跟随当前 Windows 网络代理设置。</small>
+                    <small>跟随当前 Windows 网络代理设置；Clash Fake-IP/TUN 模式请开启。</small>
                   </span>
                   <input id="useSystemProxy" type="checkbox" />
                 </label>
@@ -592,7 +592,7 @@
                       aria-describedby="siteSessionStatus"
                       required
                     />
-                    <small>只接受 HTTPS 公网地址；保存后仅用于完全相同的域名。</small>
+                    <small>只接受 HTTPS 公网地址；保存后仅用于完全相同的域名。Clash Fake-IP/TUN 模式需开启“使用系统代理”。</small>
                   </label>
                   <div class="account-actions">
                     <button class="secondary-btn" id="openSiteLoginBtn" type="button">打开辅助登录</button>

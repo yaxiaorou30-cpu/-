@@ -2506,8 +2506,8 @@ class SiteSessionArticleTests(unittest.TestCase):
         self.assertIn("exact domain", domain_error)
         self.assertIn("public DNS", private_error)
 
-    def test_generic_browser_aborts_literal_private_subrequests_and_skips_social_adapter(self):
-        crawler = NewsCrawler()
+    def test_generic_browser_proxy_mode_allows_fake_ip_and_blocks_private_subrequests(self):
+        crawler = NewsCrawler(use_system_proxy=True)
         page = MagicMock()
         page.url = "https://news.example.com/a"
         page.main_frame = SimpleNamespace(parent_frame=None)
@@ -2571,17 +2571,21 @@ class SiteSessionArticleTests(unittest.TestCase):
             dns_lookups.append(host)
             if host == "private-dns.example":
                 return [
-                    (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443)),
+                    (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("198.18.0.89", 443)),
                     (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.0.0.8", 443)),
                 ]
             return [
-                (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443)),
+                (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("198.18.0.89", 443)),
             ]
 
         with (
             patch(
                 "src.social_browser.socket.getaddrinfo",
                 side_effect=resolve_public_dns,
+            ),
+            patch(
+                "src.social_browser._has_loopback_system_proxy",
+                return_value=True,
             ),
             patch("src.crawler.load_playwright", return_value=(lambda: playwright_context, TimeoutError)),
             patch("src.crawler.get_adapter", side_effect=AssertionError("generic 会话不应读取社交适配器")),
@@ -2626,8 +2630,12 @@ class SiteSessionArticleTests(unittest.TestCase):
             patch(
                 "src.social_browser.socket.getaddrinfo",
                 return_value=[
-                    (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443)),
+                    (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("198.18.0.89", 443)),
                 ],
+            ),
+            patch(
+                "src.social_browser._has_loopback_system_proxy",
+                return_value=True,
             ),
             patch("src.crawler.load_playwright", return_value=(lambda: playwright_context, TimeoutError)),
             patch("src.crawler.get_adapter", side_effect=AssertionError("generic 会话不应读取社交适配器")),

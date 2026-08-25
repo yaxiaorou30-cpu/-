@@ -17,6 +17,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, quote, urlencode, urljoin, urlparse, urlunparse
+from urllib.request import getproxies
 
 from src.sensitive_artifacts import (
     default_sensitive_root,
@@ -26,6 +27,7 @@ from src.sensitive_artifacts import (
 
 
 XIAOHONGSHU_SEARCH_SOURCES = {"pc_search", "style", "search", "web_search", "web_explore_feed"}
+CLASH_FAKE_IP_NETWORK = ipaddress.ip_network("198.18.0.0/15")
 
 
 @dataclass(frozen=True)
@@ -401,7 +403,39 @@ def _normalize_site_domain(domain: str) -> str:
     return literal.compressed.casefold()
 
 
-def _validate_public_site_dns(domain: str) -> None:
+def _has_loopback_system_proxy() -> bool:
+    """Return whether Windows/environment proxy settings point to this machine."""
+    try:
+        proxies = getproxies()
+    except Exception:
+        return False
+    value = str(proxies.get("https") or proxies.get("all") or "").strip()
+    if not value:
+        return False
+    try:
+        parsed = urlparse(value if "://" in value else f"//{value}")
+        hostname = str(parsed.hostname or "").casefold()
+    except ValueError:
+        return False
+    if hostname == "localhost":
+        return True
+    try:
+        if ipaddress.ip_address(hostname).is_loopback:
+            return True
+    except ValueError:
+        pass
+    return False
+
+
+def _is_clash_fake_ip(address) -> bool:
+    return address.version == 4 and address in CLASH_FAKE_IP_NETWORK
+
+
+def _validate_public_site_dns(
+    domain: str,
+    *,
+    allow_clash_fake_ip: bool = False,
+) -> None:
     try:
         ipaddress.ip_address(domain)
         return
@@ -422,11 +456,24 @@ def _validate_public_site_dns(domain: str) -> None:
         parsed_addresses = [ipaddress.ip_address(address) for address in addresses]
     except ValueError as exc:
         raise ValueError("网站域名解析结果无效") from exc
-    if any(not address.is_global for address in parsed_addresses):
-        raise ValueError("网站域名解析到私网或保留地址")
+    non_public = [address for address in parsed_addresses if not address.is_global]
+    if not non_public:
+        return
+    if all(_is_clash_fake_ip(address) for address in non_public):
+        if allow_clash_fake_ip and _has_loopback_system_proxy():
+            return
+        raise ValueError(
+            "网站域名解析为 Clash Fake-IP；请开启“使用系统代理”并确认 Clash 正在运行"
+        )
+    raise ValueError("网站域名解析到私网或保留地址")
 
 
-def normalize_site_url(raw_url: str, *, resolve_dns: bool = True) -> dict:
+def normalize_site_url(
+    raw_url: str,
+    *,
+    resolve_dns: bool = True,
+    allow_clash_fake_ip: bool = False,
+) -> dict:
     """Normalize one exact HTTPS site and optionally prove all DNS results are public."""
     value = str(raw_url or "").strip()
     if not value or len(value) > 2048 or any(ord(character) < 32 for character in value):
@@ -445,7 +492,10 @@ def normalize_site_url(raw_url: str, *, resolve_dns: bool = True) -> dict:
         raise ValueError("网站登录网址只允许 HTTPS 默认端口 443")
     domain = _normalize_site_domain(hostname)
     if resolve_dns:
-        _validate_public_site_dns(domain)
+        _validate_public_site_dns(
+            domain,
+            allow_clash_fake_ip=allow_clash_fake_ip,
+        )
     try:
         ipaddress.IPv6Address(domain)
         netloc = f"[{domain}]"
@@ -526,7 +576,11 @@ def filter_storage_state_for_site(storage_state: dict, domain: str) -> dict:
     return {"cookies": cookies, "origins": origins}
 
 
-def _public_http_request_target(url: str) -> Optional[Tuple[str, str]]:
+def _public_http_request_target(
+    url: str,
+    *,
+    allow_clash_fake_ip: bool = False,
+) -> Optional[Tuple[str, str]]:
     """Return one public HTTPS:443 request target; ignore non-network schemes."""
     value = str(url or "")
     try:
@@ -543,7 +597,10 @@ def _public_http_request_target(url: str) -> Optional[Tuple[str, str]]:
     if not hostname or parsed.username is not None or parsed.password is not None:
         raise ValueError("网络请求地址无效")
     domain = _normalize_site_domain(hostname)
-    _validate_public_site_dns(domain)
+    _validate_public_site_dns(
+        domain,
+        allow_clash_fake_ip=allow_clash_fake_ip,
+    )
     return scheme, domain
 
 
@@ -551,6 +608,7 @@ def _public_websocket_request_target(
     url: str,
     *,
     exact_domain: str = "",
+    allow_clash_fake_ip: bool = False,
 ) -> Tuple[str, str]:
     """Return one public WSS:443 target, optionally limited to one exact host."""
     try:
@@ -570,7 +628,10 @@ def _public_websocket_request_target(
     domain = _normalize_site_domain(hostname)
     if exact_domain and domain != _normalize_site_domain(exact_domain):
         raise ValueError("WebSocket 只允许连接保存会话的精确域名")
-    _validate_public_site_dns(domain)
+    _validate_public_site_dns(
+        domain,
+        allow_clash_fake_ip=allow_clash_fake_ip,
+    )
     return "wss", domain
 
 
@@ -1486,16 +1547,35 @@ class BrowserSessionManager:
         self._worker_thread: threading.Thread | None = None
         self._worker_guard = threading.Lock()
 
-    def start_site_login(self, login_url: str) -> dict:
-        return self._run_on_worker(self._start_site_login, login_url)
+    def start_site_login(
+        self,
+        login_url: str,
+        *,
+        use_system_proxy: bool = False,
+    ) -> dict:
+        return self._run_on_worker(
+            self._start_site_login,
+            login_url,
+            bool(use_system_proxy),
+        )
 
-    def _start_site_login(self, login_url: str) -> dict:
-        target = normalize_site_url(login_url)
+    def _start_site_login(self, login_url: str, use_system_proxy: bool = False) -> dict:
+        target = normalize_site_url(
+            login_url,
+            allow_clash_fake_ip=use_system_proxy,
+        )
         domain = target["domain"]
         session_key = f"site:{domain}"
         for existing_key in list(self._sessions):
             if existing_key.startswith("site:") and existing_key != session_key:
                 self._discard_session(existing_key)
+
+        existing_session = self._sessions.get(session_key)
+        if (
+            existing_session
+            and bool(existing_session.get("use_system_proxy")) != bool(use_system_proxy)
+        ):
+            self._discard_session(session_key)
 
         if session_key in self._sessions:
             session = self._sessions[session_key]
@@ -1529,7 +1609,10 @@ class BrowserSessionManager:
 
             def guard_public_websocket(websocket):
                 try:
-                    _public_websocket_request_target(websocket.url)
+                    _public_websocket_request_target(
+                        websocket.url,
+                        allow_clash_fake_ip=use_system_proxy,
+                    )
                     websocket.connect_to_server()
                 except Exception:
                     websocket.close(code=1008, reason="blocked by site session policy")
@@ -1546,7 +1629,10 @@ class BrowserSessionManager:
                         and request.frame.parent_frame is None
                     )
                     if is_top_navigation:
-                        navigation_target = normalize_site_url(request_url)
+                        navigation_target = normalize_site_url(
+                            request_url,
+                            allow_clash_fake_ip=use_system_proxy,
+                        )
                         is_original_page = request.frame == page.main_frame
                         if (
                             not is_original_page
@@ -1554,7 +1640,10 @@ class BrowserSessionManager:
                         ):
                             raise ValueError("弹窗只能返回原始网站")
                     else:
-                        _public_http_request_target(request_url)
+                        _public_http_request_target(
+                            request_url,
+                            allow_clash_fake_ip=use_system_proxy,
+                        )
                     route.continue_()
                 except Exception:
                     route.abort("blockedbyclient")
@@ -1582,6 +1671,7 @@ class BrowserSessionManager:
             "page": page,
             "domain": domain,
             "login_url": target["url"],
+            "use_system_proxy": bool(use_system_proxy),
             "started_at": time.time(),
         }
         return self._site_session_status(

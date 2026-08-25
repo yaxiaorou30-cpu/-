@@ -38,7 +38,11 @@ class SiteSessionUiTests(unittest.TestCase):
         self.assertIn('requestJson("/api/browser-login/save"', self.javascript)
         self.assertIn('requestJson("/api/browser-login/close"', self.javascript)
         self.assertIn('requestJson("/api/accounts/clear"', self.javascript)
-        self.assertGreaterEqual(self.javascript.count("JSON.stringify({ site_url: siteUrl })"), 4)
+        self.assertGreaterEqual(self.javascript.count("JSON.stringify({ site_url: siteUrl })"), 3)
+        self.assertIn(
+            "JSON.stringify({ site_url: siteUrl, use_system_proxy: els.useSystemProxy.checked })",
+            self.javascript,
+        )
         self.assertNotIn('JSON.stringify({ site_url: siteUrl, profile:', self.javascript)
 
     def test_site_session_card_shows_when_login_must_be_refreshed(self):

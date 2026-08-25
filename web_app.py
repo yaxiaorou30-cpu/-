@@ -683,8 +683,17 @@ def browser_login_target(payload: dict, *, resolve_site_dns: bool) -> dict:
         raise ValueError("社交平台和网站地址必须二选一")
     if platform:
         return {"kind": "platform", "platform": platform}
-    site = normalize_site_url(site_url, resolve_dns=resolve_site_dns)
-    return {"kind": "site", **site}
+    use_system_proxy = payload.get("use_system_proxy") is True
+    site = normalize_site_url(
+        site_url,
+        resolve_dns=resolve_site_dns,
+        allow_clash_fake_ip=use_system_proxy,
+    )
+    return {
+        "kind": "site",
+        **site,
+        "use_system_proxy": use_system_proxy,
+    }
 
 
 def account_clear_target(payload: dict) -> dict:
@@ -2295,7 +2304,10 @@ class WebUIHandler(BaseHTTPRequestHandler):
         try:
             if target["kind"] == "site":
                 with SITE_AUTHORIZATION_LOCK:
-                    status = BROWSER_SESSION_MANAGER.start_site_login(target["url"])
+                    status = BROWSER_SESSION_MANAGER.start_site_login(
+                        target["url"],
+                        use_system_proxy=target["use_system_proxy"],
+                    )
                     site_sessions = build_saved_site_session_statuses()
             else:
                 status = BROWSER_SESSION_MANAGER.start_login(target["platform"])

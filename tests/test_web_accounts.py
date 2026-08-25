@@ -774,8 +774,8 @@ class WebAccountStoreTests(unittest.TestCase):
             def __init__(self):
                 self.started = []
 
-            def start_site_login(self, site_url):
-                self.started.append(site_url)
+            def start_site_login(self, site_url, *, use_system_proxy=False):
+                self.started.append((site_url, use_system_proxy))
                 return {
                     "domain": "example.com",
                     "login_url": site_url,
@@ -798,15 +798,27 @@ class WebAccountStoreTests(unittest.TestCase):
 
         manager = FakeBrowserManager()
         normalized = {"url": "https://example.com/", "domain": "example.com"}
-        handler = DummyHandler({"site_url": "https://example.com"})
+        handler = DummyHandler({
+            "site_url": "https://example.com",
+            "use_system_proxy": True,
+        })
         with patch.object(web_app, "BROWSER_SESSION_MANAGER", manager), \
              patch.object(web_app, "normalize_site_url", return_value=normalized):
             web_app.WebUIHandler.handle_browser_login_start(handler)
 
         self.assertEqual(handler.status, 200)
-        self.assertEqual(manager.started, ["https://example.com/"])
+        self.assertEqual(manager.started, [("https://example.com/", True)])
         self.assertEqual(handler.response["session"]["domain"], "example.com")
         self.assertIn("site_sessions", handler.response)
+
+        string_flag = DummyHandler({
+            "site_url": "https://example.com",
+            "use_system_proxy": "false",
+        })
+        with patch.object(web_app, "BROWSER_SESSION_MANAGER", manager), \
+             patch.object(web_app, "normalize_site_url", return_value=normalized):
+            web_app.WebUIHandler.handle_browser_login_start(string_flag)
+        self.assertEqual(manager.started[-1], ("https://example.com/", False))
 
         for payload in ({}, {"platform": self.platform, "site_url": "https://example.com"}):
             with self.subTest(payload=payload):

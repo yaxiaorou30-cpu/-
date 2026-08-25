@@ -14,6 +14,10 @@ PUBLIC_DNS = [
     (socket.AF_INET6, socket.SOCK_STREAM, 6, "", ("2606:4700:4700::1111", 443, 0, 0)),
 ]
 
+CLASH_FAKE_IP_DNS = [
+    (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("198.18.0.89", 443)),
+]
+
 
 class FakeFrame:
     def __init__(self, parent_frame=None):
@@ -150,6 +154,30 @@ class FakeWebSocketRoute:
 
 
 class SiteUrlTests(unittest.TestCase):
+    def test_loopback_proxy_check_uses_https_then_all_proxy(self):
+        cases = (
+            ({"http": "http://127.0.0.1:7897"}, False),
+            (
+                {
+                    "https": "http://proxy.example:8080",
+                    "all": "http://127.0.0.1:7897",
+                },
+                False,
+            ),
+            ({"https": "http://127.0.0.1:7897"}, True),
+            ({"all": "socks5://localhost:7897"}, True),
+        )
+
+        for proxies, expected in cases:
+            with (
+                self.subTest(proxies=proxies),
+                patch.object(social_browser, "getproxies", return_value=proxies),
+            ):
+                self.assertEqual(
+                    social_browser._has_loopback_system_proxy(),
+                    expected,
+                )
+
     def test_normalize_site_url_requires_exact_public_https_host(self):
         with patch.object(social_browser.socket, "getaddrinfo", return_value=PUBLIC_DNS):
             target = social_browser.normalize_site_url(
@@ -177,6 +205,7 @@ class SiteUrlTests(unittest.TestCase):
             "https://127.0.0.1/login",
             "https://[::1]/login",
             "https://203.0.113.10/login",
+            "https://198.18.0.89/login",
         )
 
         for url in invalid_urls:
@@ -193,6 +222,54 @@ class SiteUrlTests(unittest.TestCase):
             self.assertRaises(ValueError),
         ):
             social_browser.normalize_site_url("https://example.com/login")
+
+    def test_normalize_site_url_allows_clash_fake_ip_only_with_loopback_proxy(self):
+        with (
+            patch.object(
+                social_browser.socket,
+                "getaddrinfo",
+                return_value=CLASH_FAKE_IP_DNS,
+            ),
+            self.assertRaisesRegex(ValueError, "Clash Fake-IP"),
+        ):
+            social_browser.normalize_site_url("https://example.com/login")
+
+        with (
+            patch.object(
+                social_browser.socket,
+                "getaddrinfo",
+                return_value=CLASH_FAKE_IP_DNS,
+            ),
+            patch.object(
+                social_browser,
+                "_has_loopback_system_proxy",
+                return_value=False,
+            ),
+            self.assertRaisesRegex(ValueError, "Clash Fake-IP"),
+        ):
+            social_browser.normalize_site_url(
+                "https://example.com/login",
+                allow_clash_fake_ip=True,
+            )
+
+        with (
+            patch.object(
+                social_browser.socket,
+                "getaddrinfo",
+                return_value=CLASH_FAKE_IP_DNS,
+            ),
+            patch.object(
+                social_browser,
+                "_has_loopback_system_proxy",
+                return_value=True,
+            ),
+        ):
+            target = social_browser.normalize_site_url(
+                "https://example.com/login",
+                allow_clash_fake_ip=True,
+            )
+
+        self.assertEqual(target["domain"], "example.com")
 
     def test_filter_storage_state_keeps_only_data_usable_by_exact_https_host(self):
         state = {
@@ -302,6 +379,36 @@ class SiteSessionManagerTests(unittest.TestCase):
         self.assertTrue(second_context.closed)
         self.assertTrue(second_browser.closed)
         self.assertFalse(social_context.closed)
+
+    def test_site_login_proxy_mode_allows_fake_ip_for_page_assets_and_websockets(self):
+        with (
+            patch.object(
+                social_browser.socket,
+                "getaddrinfo",
+                return_value=CLASH_FAKE_IP_DNS,
+            ),
+            patch.object(
+                social_browser,
+                "_has_loopback_system_proxy",
+                return_value=True,
+            ),
+        ):
+            self.manager.start_site_login(
+                "https://example.com/login",
+                use_system_proxy=True,
+            )
+            context = self.playwright.chromium.latest_site_context()
+
+            route = FakeRoute()
+            context.routes[0][1](
+                route,
+                FakeRequest("https://cdn.example.com/app.js"),
+            )
+            websocket = FakeWebSocketRoute("wss://socket.example.com/connect")
+            context.websocket_routes[0][1](websocket)
+
+        self.assertEqual(route.action, "continue")
+        self.assertEqual(websocket.action, "connect")
 
     def test_save_site_session_requires_exact_final_host_and_accepts_local_storage(self):
         self.manager.start_site_login("https://example.com/login")

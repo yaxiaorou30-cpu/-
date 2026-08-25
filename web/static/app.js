@@ -634,7 +634,7 @@ async function openSiteLogin() {
   try {
     const result = await requestJson("/api/browser-login/start", {
       method: "POST",
-      body: JSON.stringify({ site_url: siteUrl }),
+      body: JSON.stringify({ site_url: siteUrl, use_system_proxy: els.useSystemProxy.checked }),
     });
     applySiteSessionResponse(result, siteUrl);
     addSourceLog(`${normalizedSiteDomain(siteUrl)}: 辅助登录浏览器已打开，请人工完成登录后保存会话`, "success");
