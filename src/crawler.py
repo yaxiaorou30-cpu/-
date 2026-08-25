@@ -4,6 +4,7 @@
 舆情采集模块
 支持多平台、多渠道、多阈值等级采集
 """
+import hashlib
 import json
 import re
 import random
@@ -3192,7 +3193,7 @@ class NewsCrawler:
                     if not self._is_valid_social_record_url(record, platform, source_group):
                         record["url"] = initial_url
                 should_enrich_article = (
-                    source_group == "public_news"
+                    source_group in {"stable", "public_news"}
                     or len(record.get("content", "")) < 80
                     or channel == "官方公开网页"
                 )
@@ -3206,7 +3207,7 @@ class NewsCrawler:
                         if not self._is_valid_social_record_url(record, platform, source_group):
                             record["url"] = initial_url
                     if (
-                        source_group == "public_news"
+                        source_group in {"stable", "public_news"}
                         or len(record.get("content", "")) < 80
                         or channel == "官方公开网页"
                     ):
@@ -4283,7 +4284,17 @@ class NewsCrawler:
     def _apply_article_detail(self, record: Dict, detail: Dict, final_url: str) -> bool:
         if not self._article_detail_is_usable(detail):
             return False
-        record["content"] = detail["content"][:2000]
+        content = self._clean_text(detail["content"])
+        fingerprint = str(detail.get("body_content_sha256") or "").strip().lower()
+        if not re.fullmatch(r"[0-9a-f]{64}", fingerprint):
+            fingerprint = self._body_content_fingerprint(content)
+        try:
+            body_content_length = int(detail.get("body_content_length") or len(content))
+        except (TypeError, ValueError):
+            body_content_length = len(content)
+        record["content"] = content[:2000]
+        record["body_content_sha256"] = fingerprint
+        record["body_content_length"] = max(len(content), body_content_length)
         if detail.get("title") and len(record.get("title", "")) < 12:
             record["title"] = detail["title"][:160]
         if detail.get("source"):
@@ -4343,11 +4354,14 @@ class NewsCrawler:
             if article:
                 content = self._clean_text(article.get_text(" ", strip=True))
 
+        full_content = self._clean_text(content)
         result = {
             "title": title,
             "source": source,
             "pub_time": pub_time,
-            "content": content[:3000],
+            "content": full_content[:3000],
+            "body_content_sha256": self._body_content_fingerprint(full_content),
+            "body_content_length": len(full_content),
         }
         if self.external_content_adapters and self._is_government_url(url):
             outcome = self.external_content_adapters.newspaper.extract(
@@ -4359,8 +4373,12 @@ class NewsCrawler:
             if outcome.data:
                 external = outcome.data
                 external_content = self._clean_text(external.get("content", ""))
-                if len(external_content) > len(result.get("content", "")):
+                if len(external_content) > result["body_content_length"]:
                     result["content"] = external_content[:3000]
+                    result["body_content_sha256"] = self._body_content_fingerprint(
+                        external_content
+                    )
+                    result["body_content_length"] = len(external_content)
                 if external.get("title"):
                     result["title"] = self._clean_text(external["title"])[:160]
                 if external.get("source"):
@@ -4404,14 +4422,17 @@ class NewsCrawler:
         for record in by_url:
             content = self._clean_text(record.get("content", ""))
             can_merge_content = bool(
-                content and record.get("body_fetch_status") != "failed"
+                content and record.get("body_fetch_status") == "success"
             )
-            if not can_merge_content or content not in content_positions:
+            fingerprint = str(record.get("body_content_sha256") or "").strip().lower()
+            if can_merge_content and not re.fullmatch(r"[0-9a-f]{64}", fingerprint):
+                fingerprint = self._body_content_fingerprint(content)
+            if not can_merge_content or fingerprint not in content_positions:
                 if can_merge_content:
-                    content_positions[content] = len(deduplicated)
+                    content_positions[fingerprint] = len(deduplicated)
                 deduplicated.append(record)
                 continue
-            index = content_positions[content]
+            index = content_positions[fingerprint]
             if self._record_content_quality(record) > self._record_content_quality(
                 deduplicated[index]
             ):
@@ -4419,10 +4440,21 @@ class NewsCrawler:
         return deduplicated
 
     @staticmethod
+    def _body_content_fingerprint(content: str) -> str:
+        if not content:
+            return ""
+        return hashlib.sha256(content.encode("utf-8", errors="replace")).hexdigest()
+
+    @staticmethod
     def _record_content_quality(record: Dict) -> Tuple[int, int]:
+        stored_length = len(str(record.get("content") or ""))
+        try:
+            full_length = int(record.get("body_content_length") or stored_length)
+        except (TypeError, ValueError):
+            full_length = stored_length
         return (
             int(record.get("body_fetch_status") == "success"),
-            len(str(record.get("content") or "")),
+            max(stored_length, full_length),
         )
 
     @staticmethod

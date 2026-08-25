@@ -319,7 +319,7 @@ def _content_check(total: int, empty_count: int) -> Dict:
         detail = f"有 {empty_count} 条记录正文获取失败或没有可用内容，请补采或进行人工核查。"
     else:
         status = "pass"
-        detail = "所有记录至少包含标题或正文。"
+        detail = "未发现正文获取失败或标题、内容同时为空的记录。"
     return _check("content_complete", "内容完整", status, f"{valid_count}/{total} 条有内容", detail)
 
 

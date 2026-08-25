@@ -148,6 +148,7 @@ class Orchestrator:
         logger.info(f"开始多事件报告生成: input={input_json}")
 
         raw_data = self._load_json(input_json)
+        _require_completed_body_reviews(raw_data)
         records = self.preprocessor.process(raw_data)
         records = self.preprocessor.deduplicate(records)
 

@@ -11,7 +11,12 @@ from src.record_analysis import (
     body_review_is_pending,
     classify_content,
 )
-from web_app import build_reviewed_records, filter_report_records, review_is_complete
+from web_app import (
+    build_reviewed_records,
+    filter_report_records,
+    parse_review_decisions,
+    review_is_complete,
+)
 
 
 class RecordAnalysisTests(unittest.TestCase):
@@ -100,7 +105,10 @@ class RecordAnalysisTests(unittest.TestCase):
         self.assertFalse(body_review_is_pending(record))
 
     def test_review_merge_cannot_overwrite_source_evidence_fields(self):
-        original = [self._science_record(), {**self._science_record(), "url": "https://example.com/other"}]
+        original = [
+            {**self._science_record(), "body_fetch_status": "failed"},
+            {**self._science_record(), "url": "https://example.com/other"},
+        ]
         reviewed, summary = build_reviewed_records(
             original,
             [
@@ -111,6 +119,8 @@ class RecordAnalysisTests(unittest.TestCase):
                     "sentiment_label": "中性",
                     "note": "人工确认",
                     "url": "https://attacker.invalid/overwrite",
+                    "body_fetch_status": "success",
+                    "body_verified": True,
                 },
                 {
                     "index": 1,
@@ -125,10 +135,20 @@ class RecordAnalysisTests(unittest.TestCase):
 
         self.assertEqual(len(reviewed), 1)
         self.assertEqual(reviewed[0]["url"], "https://example.com/science")
+        self.assertEqual(reviewed[0]["body_fetch_status"], "failed")
         self.assertEqual(reviewed[0]["content_category"], "社会民生")
         self.assertEqual(summary["removed_total"], 1)
         self.assertEqual(summary["category_changed_count"], 1)
         self.assertTrue(summary["labels_confirmed"])
+
+    def test_review_api_rejects_legacy_full_record_payloads(self):
+        for payload in (
+            {"records": [{"body_fetch_status": "success"}]},
+            {"kept_indexes": [0]},
+        ):
+            with self.subTest(payload=payload):
+                with self.assertRaisesRegex(ValueError, "reviews"):
+                    parse_review_decisions(payload)
 
     def test_old_checkbox_only_review_does_not_unlock_report(self):
         data = [self._science_record()]

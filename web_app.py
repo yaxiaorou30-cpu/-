@@ -1233,6 +1233,13 @@ def build_latest_payload(data_file: Path = DATA_FILE, meta_file: Path = META_FIL
     }
 
 
+def parse_review_decisions(payload: dict) -> list:
+    """审核接口只接受记录序号和人工决定，不接受前端回传来源记录。"""
+    if not isinstance(payload, dict) or payload.get("reviews") is None:
+        raise ValueError("审核请求必须使用 reviews 提交记录序号和人工决定")
+    return payload["reviews"]
+
+
 def build_reviewed_records(data: list, decisions: list, reviewer: str = "", reviewed_at: str = ""):
     """将前端审核决定合并回原始记录，禁止用前端请求覆盖来源证据字段。"""
     if not isinstance(decisions, list):
@@ -2437,41 +2444,24 @@ class WebUIHandler(BaseHTTPRequestHandler):
         try:
             payload = self.read_body_json()
             data = read_json(DATA_FILE, [])
-            decisions = payload.get("reviews")
-            kept_indexes = payload.get("kept_indexes")
-            edited_records = payload.get("records")
-            review_summary = None
-            if decisions is not None:
-                identity = self.current_identity(touch=False) or {}
-                reviewed, review_summary = build_reviewed_records(
-                    data,
-                    decisions,
-                    reviewer=str(identity.get("username") or ""),
-                )
-                original_total = len(data)
-            elif edited_records is not None:
-                reviewed = [record for record in edited_records if isinstance(record, dict)]
-                original_total = len(data)
-            elif kept_indexes is not None:
-                index_set = {int(index) for index in kept_indexes}
-                reviewed = [record for idx, record in enumerate(data) if idx in index_set]
-                original_total = len(data)
-            else:
-                raise ValueError("没有收到审核后的数据")
+            decisions = parse_review_decisions(payload)
+            identity = self.current_identity(touch=False) or {}
+            reviewed, review_summary = build_reviewed_records(
+                data,
+                decisions,
+                reviewer=str(identity.get("username") or ""),
+            )
 
             write_json_atomic(DATA_FILE, reviewed)
 
             meta = read_json(META_FILE, {})
-            meta["review"] = review_summary or {
-                "reviewed_at": datetime.now().isoformat(),
-                "original_total": original_total,
-                "kept_total": len(reviewed),
-                "removed_total": max(original_total - len(reviewed), 0),
-            }
+            meta["review"] = review_summary
             meta["review"]["operator_note"] = str(payload.get("note") or "")[:500]
             write_json_atomic(META_FILE, meta)
             update_current_history_archive()
             self.send_json({"ok": True, "message": "审核结果已保存", "latest": self.build_latest()})
+        except ValueError as exc:
+            self.send_json({"ok": False, "message": str(exc)}, status=400)
         except Exception as exc:
             self.send_json({"ok": False, "message": str(exc)}, status=500)
 

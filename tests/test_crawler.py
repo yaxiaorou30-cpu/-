@@ -189,6 +189,50 @@ class CrawlerParsingTests(unittest.TestCase):
         self.assertEqual(set(enriched_urls), {item["url"] for item in records})
         self.assertTrue(all(item["detail_source"] == "scrapling_stealth" for item in records))
 
+    def test_stable_government_result_attempts_article_body_fetch_in_normal_mode(self):
+        long_title = "政府官网发布公开事项进展" * 10
+        self.crawler.anti_crawl.delay = lambda *args, **kwargs: None
+        self.crawler._request_source_html = lambda **kwargs: (
+            "<html></html>",
+            kwargs["url"],
+            None,
+        )
+        self.crawler._parse_results = lambda *args, **kwargs: [{
+            "title": long_title,
+            "content": long_title,
+            "url": "https://www.example.gov.cn/notices/1",
+            "source": "测试政府官网",
+            "pub_time": "",
+        }]
+        enriched = []
+
+        def mark_failed(record):
+            enriched.append(record["url"])
+            record["body_fetch_status"] = "failed"
+
+        self.crawler._enrich_with_article_content = mark_failed
+
+        records, failures = self.crawler._collect_from_source_requests(
+            source_requests=[{
+                "channel": "测试政府官网",
+                "platform": "测试政府官网",
+                "source_group": "stable",
+                "parser": "generic",
+                "url": "https://www.example.gov.cn/search",
+                "timeout": 10,
+            }],
+            keyword="政府官网",
+            region="全国",
+            collect_level="最小采集",
+            start_time=None,
+            end_time=None,
+            remaining=1,
+        )
+
+        self.assertEqual(failures, [])
+        self.assertEqual(enriched, ["https://www.example.gov.cn/notices/1"])
+        self.assertEqual(records[0]["body_fetch_status"], "failed")
+
     def test_public_news_attempts_every_keyword_and_discovery_source_before_limiting(self):
         calls = []
 
@@ -2256,12 +2300,44 @@ class CrawlerPolicyTests(unittest.TestCase):
         records = [
             {"url": "https://example.com/a", "title": "同一标题", "content": "短"},
             {"url": "https://example.com/a", "title": "同一标题", "content": "更完整的正文内容"},
-            {"url": "", "title": "重复内容标题", "content": "重复内容正文"},
-            {"url": "", "title": "重复内容标题", "content": "重复内容正文"},
+            {
+                "url": "",
+                "title": "重复内容标题",
+                "content": "重复内容正文",
+                "body_fetch_status": "success",
+            },
+            {
+                "url": "",
+                "title": "重复内容标题",
+                "content": "重复内容正文",
+                "body_fetch_status": "success",
+            },
         ]
         deduped = self.crawler._deduplicate_results(records)
         self.assertEqual(len(deduped), 2)
         self.assertEqual(deduped[0]["content"], "更完整的正文内容")
+
+    def test_same_url_keeps_record_with_longer_full_article_body(self):
+        stored_excerpt = "正文" * 1000
+        records = [
+            {
+                "url": "https://example.com/same",
+                "content": stored_excerpt,
+                "body_fetch_status": "success",
+                "body_content_length": 2500,
+            },
+            {
+                "url": "https://example.com/same",
+                "content": stored_excerpt,
+                "body_fetch_status": "success",
+                "body_content_length": 5000,
+            },
+        ]
+
+        deduped = self.crawler._deduplicate_results(records)
+
+        self.assertEqual(len(deduped), 1)
+        self.assertEqual(deduped[0]["body_content_length"], 5000)
 
     def test_deduplicate_same_body_across_different_urls(self):
         records = [
@@ -2269,11 +2345,13 @@ class CrawlerPolicyTests(unittest.TestCase):
                 "url": "https://first.example.com/article",
                 "title": "转载标题一",
                 "content": "这是两个网页完全相同的正文内容。",
+                "body_fetch_status": "success",
             },
             {
                 "url": "https://second.example.com/repost",
                 "title": "转载标题二",
                 "content": "这是两个网页完全相同的正文内容。",
+                "body_fetch_status": "success",
             },
         ]
 
@@ -2289,17 +2367,76 @@ class CrawlerPolicyTests(unittest.TestCase):
                 "url": "https://example.com/a",
                 "title": "标题一",
                 "content": f"{shared_prefix}正文结尾甲",
+                "body_fetch_status": "success",
             },
             {
                 "url": "https://example.com/b",
                 "title": "标题二",
                 "content": f"{shared_prefix}正文结尾乙",
+                "body_fetch_status": "success",
             },
         ]
 
         deduped = self.crawler._deduplicate_results(records)
 
         self.assertEqual(len(deduped), 2)
+
+    def test_deduplicate_does_not_treat_missing_body_status_as_full_text(self):
+        records = [
+            {
+                "url": "https://example.com/a",
+                "content": "旧数据中状态未知的相同摘要",
+            },
+            {
+                "url": "https://example.com/b",
+                "content": "旧数据中状态未知的相同摘要",
+            },
+        ]
+
+        deduped = self.crawler._deduplicate_results(records)
+
+        self.assertEqual(len(deduped), 2)
+
+    def test_deduplicate_uses_full_article_fingerprint_beyond_stored_excerpt(self):
+        shared = "共同正文段落" * 700
+        records = []
+        for suffix in ("文章结尾甲", "文章结尾乙"):
+            detail = self.crawler._extract_article_content(
+                f"<html><body><article><p>{shared}{suffix}</p></article></body></html>",
+                "https://example.com/article",
+            )
+            record = {
+                "url": f"https://example.com/{suffix}",
+                "title": suffix,
+                "content": "搜索摘要",
+            }
+            self.assertTrue(
+                self.crawler._apply_article_detail(record, detail, record["url"])
+            )
+            records.append(record)
+
+        self.assertEqual(records[0]["content"], records[1]["content"])
+        self.assertEqual(len(self.crawler._deduplicate_results(records)), 2)
+
+    def test_deduplicate_merges_identical_long_article_fingerprints(self):
+        body = "完整转载正文" * 700
+        detail = self.crawler._extract_article_content(
+            f"<html><body><article><p>{body}</p></article></body></html>",
+            "https://example.com/article",
+        )
+        records = []
+        for index in range(2):
+            record = {
+                "url": f"https://example.com/repost-{index}",
+                "title": f"转载标题 {index}",
+                "content": "搜索摘要",
+            }
+            self.assertTrue(
+                self.crawler._apply_article_detail(record, detail, record["url"])
+            )
+            records.append(record)
+
+        self.assertEqual(len(self.crawler._deduplicate_results(records)), 1)
 
     def test_deduplicate_does_not_treat_failed_body_snippet_as_full_text(self):
         records = [

@@ -474,6 +474,23 @@ class ReportGenerationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "正文获取失败"):
             build_report_preview(str(data_path), "event_report")
 
+    def test_multi_event_reports_reject_failed_body_until_original_is_checked(self):
+        root = self._temporary_data_dir("_test_pending_body_multi_")
+        data_path = root / "latest_news.json"
+        data_path.write_text(
+            json.dumps([{
+                **self._sample_data()[0],
+                "body_fetch_status": "failed",
+            }], ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+        with self.assertRaisesRegex(ValueError, "正文获取失败"):
+            Orchestrator().generate_multi_event_reports(
+                str(data_path),
+                str(root / "reports"),
+            )
+
     def test_generic_social_content_does_not_create_case_progress(self):
         records = Preprocessor().process([{
             "title": "网友讨论一则社会事件",
