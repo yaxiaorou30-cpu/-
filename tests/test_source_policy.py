@@ -396,6 +396,31 @@ class SourceAccessPolicyTests(unittest.TestCase):
         self.assertEqual(allowed.source_rule_id, "SRC-PUBLIC-BAIDU-QIANFAN")
         self.assertEqual(allowed.code, "external_adapter_allowed")
 
+    def test_production_registry_distinguishes_baijiahao_from_baidu_search(self):
+        robots_calls = []
+
+        def fetcher(*args, **kwargs):
+            robots_calls.append(args[0])
+            return FakeResponse(404, b"", args[0])
+
+        policy = SourceAccessPolicy(
+            Path("config") / "source_access_rules.json",
+            fetcher=fetcher,
+        )
+
+        search = policy.check("https://www.baidu.com/s?wd=test", "百度公开搜索")
+        article = policy.check(
+            "https://baijiahao.baidu.com/s?id=1234567890",
+            "百家号文章",
+        )
+
+        self.assertFalse(search.allowed)
+        self.assertEqual(search.source_rule_id, "SRC-STABLE-BAIDU")
+        self.assertEqual(search.code, "automation_disabled")
+        self.assertEqual(article.source_rule_id, "SRC-PUBLIC-BAIJIAHAO")
+        self.assertTrue(article.allowed)
+        self.assertEqual(robots_calls, [])
+
 
 if __name__ == "__main__":
     unittest.main()

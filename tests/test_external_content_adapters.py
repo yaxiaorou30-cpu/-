@@ -96,6 +96,7 @@ class ExternalContentAdapterTests(unittest.TestCase):
         self.assertTrue(calls[0][1]["solve_cloudflare"])
         self.assertTrue(calls[0][1]["network_idle"])
         self.assertTrue(calls[0][1]["block_ads"])
+        self.assertFalse(calls[0][1]["disable_resources"])
         self.assertFalse(calls[0][1]["google_search"])
         self.assertIs(calls[0][1]["page_setup"], _setup_public_only_routes)
 
@@ -338,16 +339,39 @@ class CrawlerContentEnrichmentTests(unittest.TestCase):
 
         self.assertEqual(calls, ["browser", "aiotieba"])
 
-    def test_newspaper4k_is_used_only_for_government_domain(self):
+    def test_extract_article_content_reads_json_ld_article_body(self):
+        article_body = "JSON-LD 中保存的完整公开新闻正文。" * 12
+        html = f"""
+        <html><head>
+          <title>JSON-LD 新闻</title>
+          <script type="application/ld+json">
+            {json.dumps({"@type": "NewsArticle", "articleBody": article_body}, ensure_ascii=False)}
+          </script>
+        </head><body></body></html>
+        """
+
+        detail = NewsCrawler()._extract_article_content(
+            html,
+            "https://news.example.com/article/json-ld",
+        )
+
+        self.assertEqual(detail["content"], article_body)
+        self.assertEqual(detail["body_content_length"], len(article_body))
+
+    def test_newspaper4k_skips_non_government_page_when_builtin_body_is_usable(self):
         outcome = EnrichmentOutcome(
             adapter_name="newspaper4k",
             available=True,
             attempted=True,
-            data={"title": "政府公告", "content": "外部提取的完整政府公告正文。" * 8, "source": "某政府", "pub_time": "2026-07-23"},
+            data={"title": "政府公告", "content": "外部提取的完整政府公告正文。" * 20, "source": "某政府", "pub_time": "2026-07-23"},
         )
         adapters = FakeContentAdapters(newspaper_outcome=outcome)
         crawler = NewsCrawler(external_content_adapters=adapters)
-        html = "<html><head><title>短标题</title></head><body><p>内置解析正文长度足够用于比较。</p></body></html>"
+        html = (
+            "<html><head><title>短标题</title></head><body><article><p>"
+            + ("内置解析得到的完整新闻正文。" * 12)
+            + "</p></article></body></html>"
+        )
 
         detail = crawler._extract_article_content(html, "https://www.example.gov.cn/notice/1")
         crawler._extract_article_content(html, "https://news.example.com/notice/1")
@@ -355,6 +379,29 @@ class CrawlerContentEnrichmentTests(unittest.TestCase):
         self.assertEqual(detail["detail_source"], "newspaper4k")
         self.assertIn("完整政府公告正文", detail["content"])
         self.assertEqual(len(adapters.newspaper.calls), 1)
+
+    def test_newspaper4k_falls_back_for_short_non_government_news_body(self):
+        outcome = EnrichmentOutcome(
+            adapter_name="newspaper4k",
+            available=True,
+            attempted=True,
+            data={"title": "完整新闻", "content": "newspaper4k 提取的完整公开新闻正文。" * 12},
+        )
+        adapters = FakeContentAdapters(newspaper_outcome=outcome)
+        crawler = NewsCrawler(external_content_adapters=adapters)
+        html = "<html><head><title>短标题</title></head><body><article>简短说明。</article></body></html>"
+
+        detail = crawler._extract_article_content(
+            html,
+            "https://news.example.com/article/short-body",
+        )
+
+        self.assertEqual(detail["detail_source"], "newspaper4k")
+        self.assertIn("newspaper4k 提取的完整公开新闻正文", detail["content"])
+        self.assertEqual(
+            adapters.newspaper.calls[0][1],
+            "https://news.example.com/article/short-body",
+        )
 
     def test_official_source_enriches_even_when_search_abstract_is_long(self):
         outcome = EnrichmentOutcome(

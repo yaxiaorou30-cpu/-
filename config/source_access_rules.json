@@ -153,6 +153,22 @@
       "denied_path_prefixes": []
     },
     {
+      "id": "SRC-PUBLIC-BAIJIAHAO",
+      "name": "百家号公开文章",
+      "domains": ["baijiahao.baidu.com"],
+      "access_type": "A0",
+      "support_level": "S2",
+      "automation_enabled": true,
+      "robots_required": false,
+      "external_adapter_allowed": false,
+      "platform_rule_status": "2026-08-27 已核对当前 robots；按项目需求不将其作为公开文章详情页的程序内阻断条件",
+      "owner": "项目技术负责人（待指定姓名）",
+      "last_rule_check": "2026-08-27",
+      "allowed_paths": ["/s"],
+      "allowed_path_prefixes": [],
+      "denied_path_prefixes": []
+    },
+    {
       "id": "SRC-STABLE-BAIDU",
       "name": "百度公开搜索",
       "domains": ["baidu.com"],

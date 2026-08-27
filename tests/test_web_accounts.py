@@ -192,6 +192,8 @@ class WebAccountStoreTests(unittest.TestCase):
         self.assertIn('<option value="pending">待人工核查</option>', html)
         self.assertIn('item.body_fetch_status === "failed"', javascript)
         self.assertIn("待人工核查：正文获取失败", javascript)
+        self.assertIn("item.body_fetch_error", javascript)
+        self.assertIn("失败原因：", javascript)
         self.assertIn("body_verified:", javascript)
         self.assertIn('if (!value) return "时间未知";', javascript)
 

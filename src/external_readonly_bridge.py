@@ -249,7 +249,7 @@ def fetch_scrapling_article(payload: dict) -> dict:
         "headless": True,
         "network_idle": True,
         "timeout": timeout_ms,
-        "disable_resources": True,
+        "disable_resources": False,
         "block_ads": True,
         "solve_cloudflare": True,
         "google_search": False,

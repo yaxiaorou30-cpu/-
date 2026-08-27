@@ -1631,9 +1631,13 @@ function renderTable(data) {
     if (bodyFetchFailed) {
       const bodyStatus = document.createElement("small");
       bodyStatus.className = "review-machine-hint pending";
-      bodyStatus.textContent = bodyManuallyChecked
+      const bodyFailureLabel = bodyManuallyChecked
         ? "已人工核查：自动正文获取失败"
         : "待人工核查：正文获取失败";
+      const bodyFailureReason = String(item.body_fetch_error || "").replace(/\s+/g, " ").trim().slice(0, 160);
+      bodyStatus.textContent = bodyFailureReason
+        ? `${bodyFailureLabel}；失败原因：${bodyFailureReason}`
+        : bodyFailureLabel;
       title.appendChild(bodyStatus);
     }
 

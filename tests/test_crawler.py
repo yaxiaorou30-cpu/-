@@ -2582,6 +2582,82 @@ class SiteSessionArticleTests(unittest.TestCase):
         self.assertEqual(record["content"], "搜索接口返回的摘要")
         self.assertEqual(record["pub_time"], "2026-08-25T10:00:00")
 
+    def test_baijiahao_article_attempts_anonymous_body_fetch(self):
+        scrapling_calls = []
+        plain_calls = []
+
+        class FailingScrapling:
+            @staticmethod
+            def is_available():
+                return True
+
+            @staticmethod
+            def fetch(**kwargs):
+                scrapling_calls.append(kwargs["url"])
+                return SimpleNamespace(data={}, error="scrapling unavailable")
+
+        crawler = NewsCrawler(
+            external_content_adapters=type(
+                "Adapters",
+                (),
+                {"scrapling": FailingScrapling()},
+            )(),
+        )
+        article_url = "https://baijiahao.baidu.com/s?id=123456789"
+
+        def plain_request(url, channel, timeout=10):
+            plain_calls.append((url, channel))
+            return "", url, "request timeout"
+
+        crawler._request_html = plain_request
+        crawler._enrich_with_article_content({
+            "url": article_url,
+            "title": "百家号公开文章",
+            "content": "搜索摘要",
+        })
+
+        self.assertEqual(scrapling_calls, [article_url])
+        self.assertEqual(plain_calls, [(article_url, "article-detail")])
+
+    def test_failed_body_fetch_records_each_attempt_and_final_error(self):
+        class FailingScrapling:
+            @staticmethod
+            def is_available():
+                return True
+
+            @staticmethod
+            def fetch(**kwargs):
+                return SimpleNamespace(data={}, error="scrapling timed out")
+
+        crawler = NewsCrawler(
+            external_content_adapters=type(
+                "Adapters",
+                (),
+                {"scrapling": FailingScrapling()},
+            )(),
+        )
+        crawler._request_html = lambda url, channel: ("", url, "request timeout")
+        record = {
+            "url": "https://news.example.com/failing-article",
+            "title": "新闻标题",
+            "content": "搜索摘要",
+        }
+
+        crawler._enrich_with_article_content(record)
+
+        self.assertEqual(
+            [
+                (attempt["method"], attempt["status"], attempt["error"])
+                for attempt in record["body_fetch_attempts"]
+            ],
+            [
+                ("scrapling_stealth", "failed", "scrapling timed out"),
+                ("ordinary_request", "failed", "request timeout"),
+            ],
+        )
+        self.assertIn("ordinary_request", record["body_fetch_error"])
+        self.assertIn("request timeout", record["body_fetch_error"])
+
     def test_site_session_failure_falls_back_without_forwarding_state_to_scrapling(self):
         scrapling_calls = []
 

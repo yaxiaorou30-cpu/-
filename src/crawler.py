@@ -1018,10 +1018,10 @@ class NewsCrawler:
             return False
 
     @staticmethod
-    def _article_detail_is_usable(detail: Dict) -> bool:
+    def _article_detail_failure_reason(detail: Dict) -> str:
         content = re.sub(r"\s+", " ", str((detail or {}).get("content") or "")).strip()
         if len(content) < 80:
-            return False
+            return "content_too_short"
         title = re.sub(r"\s+", " ", str((detail or {}).get("title") or "")).strip()
         normalized_title = title.casefold().strip(" .。!！…")
         blocked_titles = (
@@ -1035,10 +1035,36 @@ class NewsCrawler:
             "checking your browser",
             "attention required",
         )
-        return not any(
+        if any(
             normalized_title == marker or normalized_title.startswith(f"{marker} ")
             for marker in blocked_titles
-        )
+        ):
+            return "blocked_page"
+        return ""
+
+    @classmethod
+    def _article_detail_is_usable(cls, detail: Dict) -> bool:
+        return not cls._article_detail_failure_reason(detail)
+
+    @staticmethod
+    def _record_body_fetch_attempt(
+        record: Dict,
+        method: str,
+        status: str,
+        error: str = "",
+    ) -> None:
+        attempts = record.setdefault("body_fetch_attempts", [])
+        if not isinstance(attempts, list):
+            attempts = []
+            record["body_fetch_attempts"] = attempts
+        error_text = re.sub(r"\s+", " ", str(error or "")).strip()[:300]
+        attempts.append({
+            "method": str(method or "unknown"),
+            "status": str(status or "failed"),
+            "error": error_text,
+        })
+        if status == "failed":
+            record["body_fetch_error"] = f"{method}: {error_text or 'unknown failure'}"
 
     @staticmethod
     def _site_session_error_needs_relogin(error: str) -> bool:
@@ -4168,10 +4194,12 @@ class NewsCrawler:
     def _enrich_with_article_content(self, record: Dict):
         """尝试抓取详情页正文，失败时保留搜索摘要。"""
         record["body_fetch_status"] = "failed"
+        record["body_fetch_attempts"] = []
+        record.pop("body_fetch_error", None)
+        record.setdefault("search_snippet", self._clean_text(record.get("content", "")))
         url = record.get("url", "")
         if not url.startswith(("http://", "https://")):
-            return
-        if any(domain in urlparse(url).netloc for domain in ["baidu.com", "sogou.com"]):
+            self._record_body_fetch_attempt(record, "validation", "failed", "invalid_url")
             return
 
         try:
@@ -4184,6 +4212,12 @@ class NewsCrawler:
             try:
                 site_session = self.site_session_resolver(url)
             except Exception as exc:
+                self._record_body_fetch_attempt(
+                    record,
+                    "site_browser_session",
+                    "failed",
+                    f"session_resolver_failed: {type(exc).__name__}",
+                )
                 logger.debug("网站会话解析失败，继续匿名正文获取: %s", type(exc).__name__)
         if isinstance(site_session, dict):
             exact_domain = str(site_session.get("domain") or "").strip()
@@ -4233,7 +4267,14 @@ class NewsCrawler:
                         True,
                         session_version,
                     )
-                if not session_error and rendered_html:
+                if session_error:
+                    self._record_body_fetch_attempt(
+                        record,
+                        "site_browser_session",
+                        "failed",
+                        session_error,
+                    )
+                elif rendered_html:
                     if session_domain_matches:
                         self._record_site_session_status(
                             target_domain,
@@ -4243,7 +4284,25 @@ class NewsCrawler:
                     detail = self._extract_article_content(rendered_html, rendered_url or url)
                     detail["detail_source"] = "site_browser_session"
                     if self._apply_article_detail(record, detail, rendered_url or url):
+                        self._record_body_fetch_attempt(
+                            record,
+                            "site_browser_session",
+                            "success",
+                        )
                         return
+                    self._record_body_fetch_attempt(
+                        record,
+                        "site_browser_session",
+                        "failed",
+                        detail.get("extract_error") or self._article_detail_failure_reason(detail),
+                    )
+                else:
+                    self._record_body_fetch_attempt(
+                        record,
+                        "site_browser_session",
+                        "failed",
+                        "empty_response",
+                    )
             elif (
                 session_domain_matches
                 and session_key not in self._site_session_failed_versions
@@ -4253,33 +4312,94 @@ class NewsCrawler:
                     True,
                     session_version,
                 )
+                self._record_body_fetch_attempt(
+                    record,
+                    "site_browser_session",
+                    "failed",
+                    "saved_session_missing_state",
+                )
 
         scrapling = getattr(self.external_content_adapters, "scrapling", None)
         if scrapling and scrapling.is_available():
             access_decision = self.source_policy.check(url, "article-detail")
-            if access_decision.allowed:
-                outcome = scrapling.fetch(
-                    url=url,
-                    use_system_proxy=self.use_system_proxy,
-                    timeout=45,
+            if not access_decision.allowed:
+                self._record_body_fetch_attempt(
+                    record,
+                    "scrapling_stealth",
+                    "failed",
+                    f"source_policy_blocked[{access_decision.code}]",
                 )
-                rendered_html = str(outcome.data.get("html") or "")
-                rendered_url = str(outcome.data.get("final_url") or url)
-                if rendered_html:
+            else:
+                try:
+                    outcome = scrapling.fetch(
+                        url=url,
+                        use_system_proxy=self.use_system_proxy,
+                        timeout=45,
+                    )
+                    outcome_data = getattr(outcome, "data", {}) or {}
+                    outcome_error = str(getattr(outcome, "error", "") or "")
+                except Exception as exc:
+                    outcome_data = {}
+                    outcome_error = f"request_failed: {type(exc).__name__}"
+                rendered_html = str(outcome_data.get("html") or "")
+                rendered_url = str(outcome_data.get("final_url") or url)
+                if not rendered_html:
+                    self._record_body_fetch_attempt(
+                        record,
+                        "scrapling_stealth",
+                        "failed",
+                        outcome_error or "empty_response",
+                    )
+                else:
                     final_decision = self.source_policy.check(rendered_url, "article-detail")
-                    if final_decision.allowed:
+                    if not final_decision.allowed:
+                        self._record_body_fetch_attempt(
+                            record,
+                            "scrapling_stealth",
+                            "failed",
+                            f"final_source_policy_blocked[{final_decision.code}]",
+                        )
+                    else:
                         detail = self._extract_article_content(rendered_html, rendered_url)
-                        if self._article_detail_is_usable(detail):
-                            detail["detail_source"] = "scrapling_stealth"
-                            if self._apply_article_detail(record, detail, rendered_url):
-                                return
+                        detail["detail_source"] = "scrapling_stealth"
+                        if self._apply_article_detail(record, detail, rendered_url):
+                            self._record_body_fetch_attempt(
+                                record,
+                                "scrapling_stealth",
+                                "success",
+                            )
+                            return
+                        self._record_body_fetch_attempt(
+                            record,
+                            "scrapling_stealth",
+                            "failed",
+                            detail.get("extract_error") or self._article_detail_failure_reason(detail),
+                        )
 
         html_text, final_url, error = self._request_html(url, "article-detail")
         if error:
+            self._record_body_fetch_attempt(
+                record,
+                "ordinary_request",
+                "failed",
+                error,
+            )
             return
         detail = self._extract_article_content(html_text, final_url or url)
         detail.setdefault("detail_source", "ordinary_request")
-        self._apply_article_detail(record, detail, final_url or url)
+        if self._apply_article_detail(record, detail, final_url or url):
+            self._record_body_fetch_attempt(
+                record,
+                "ordinary_request",
+                "success",
+            )
+            return
+        self._record_body_fetch_attempt(
+            record,
+            "ordinary_request",
+            "failed",
+            detail.get("extract_error") or self._article_detail_failure_reason(detail),
+        )
 
     def _apply_article_detail(self, record: Dict, detail: Dict, final_url: str) -> bool:
         if not self._article_detail_is_usable(detail):
@@ -4312,11 +4432,35 @@ class NewsCrawler:
         record["body_fetch_status"] = "success"
         record["detail_enriched"] = True
         record["detail_source"] = detail.get("detail_source") or "ordinary_request"
+        record.pop("body_fetch_error", None)
         return True
 
     def _extract_article_content(self, html_text: str, url: str = "") -> Dict:
         """从通用新闻详情页抽取正文、标题、来源、时间。"""
         soup = BeautifulSoup(html_text, "html.parser")
+        json_ld_content = ""
+        for script in soup.find_all("script"):
+            script_type = str(script.get("type") or "").casefold()
+            if "ld+json" not in script_type:
+                continue
+            raw_json = script.string or script.get_text("", strip=True)
+            try:
+                payload = json.loads(raw_json)
+            except (TypeError, json.JSONDecodeError):
+                continue
+            pending = [payload]
+            while pending:
+                item = pending.pop()
+                if isinstance(item, dict):
+                    article_body = self._clean_text(item.get("articleBody", ""))
+                    if len(article_body) > len(json_ld_content):
+                        json_ld_content = article_body
+                    pending.extend(
+                        value for value in item.values()
+                        if isinstance(value, (dict, list))
+                    )
+                elif isinstance(item, list):
+                    pending.extend(item)
         for tag in soup(["script", "style", "noscript", "nav", "footer", "header"]):
             tag.decompose()
 
@@ -4343,16 +4487,18 @@ class NewsCrawler:
         if not pub_time:
             _, pub_time = self._split_source_time(page_text, fallback_source=source or "")
 
-        paragraphs = []
-        for p in soup.find_all("p"):
-            text = self._clean_text(p.get_text(" ", strip=True))
-            if len(text) >= 20:
-                paragraphs.append(text)
-        content = "\n".join(paragraphs)
+        content = json_ld_content
         if len(content) < 80:
-            article = soup.find(["article", "main"]) or soup.find(class_=lambda x: x and any(k in x.lower() for k in ["article", "content", "正文", "detail"]))
-            if article:
-                content = self._clean_text(article.get_text(" ", strip=True))
+            paragraphs = []
+            for p in soup.find_all("p"):
+                text = self._clean_text(p.get_text(" ", strip=True))
+                if len(text) >= 20:
+                    paragraphs.append(text)
+            content = "\n".join(paragraphs)
+            if len(content) < 80:
+                article = soup.find(["article", "main"]) or soup.find(class_=lambda x: x and any(k in x.lower() for k in ["article", "content", "正文", "detail"]))
+                if article:
+                    content = self._clean_text(article.get_text(" ", strip=True))
 
         full_content = self._clean_text(content)
         result = {
@@ -4363,8 +4509,12 @@ class NewsCrawler:
             "body_content_sha256": self._body_content_fingerprint(full_content),
             "body_content_length": len(full_content),
         }
-        if self.external_content_adapters and self._is_government_url(url):
-            outcome = self.external_content_adapters.newspaper.extract(
+        newspaper = getattr(self.external_content_adapters, "newspaper", None)
+        if newspaper and (
+            self._is_government_url(url)
+            or not self._article_detail_is_usable(result)
+        ):
+            outcome = newspaper.extract(
                 html=html_text,
                 url=url,
                 language="zh",
@@ -4386,6 +4536,8 @@ class NewsCrawler:
                 if external.get("pub_time"):
                     result["pub_time"] = external["pub_time"]
                 result["detail_source"] = "newspaper4k"
+            elif outcome.error:
+                result["extract_error"] = self._clean_text(outcome.error)[:300]
         return result
 
     @staticmethod
