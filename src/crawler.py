@@ -4438,6 +4438,12 @@ class NewsCrawler:
     def _extract_article_content(self, html_text: str, url: str = "") -> Dict:
         """从通用新闻详情页抽取正文、标题、来源、时间。"""
         soup = BeautifulSoup(html_text, "html.parser")
+        host = (urlparse(url or "").hostname or "").casefold()
+        baijiahao_content = (
+            self._extract_baijiahao_content(soup)
+            if host == "baijiahao.baidu.com"
+            else ""
+        )
         json_ld_content = ""
         for script in soup.find_all("script"):
             script_type = str(script.get("type") or "").casefold()
@@ -4487,7 +4493,7 @@ class NewsCrawler:
         if not pub_time:
             _, pub_time = self._split_source_time(page_text, fallback_source=source or "")
 
-        content = json_ld_content
+        content = baijiahao_content or json_ld_content
         if len(content) < 80:
             paragraphs = []
             for p in soup.find_all("p"):
@@ -4539,6 +4545,41 @@ class NewsCrawler:
             elif outcome.error:
                 result["extract_error"] = self._clean_text(outcome.error)[:300]
         return result
+
+    def _extract_baijiahao_content(self, soup: BeautifulSoup) -> str:
+        """读取百家号渲染段落，必要时回退到页面内嵌的 JSON 正文。"""
+        paragraphs = [
+            self._clean_text(node.get_text(" ", strip=True))
+            for node in soup.select(".bjh-p")
+        ]
+        content = self._clean_text(" ".join(filter(None, paragraphs)))
+        if len(content) >= 80:
+            return content
+
+        for script in soup.find_all("script"):
+            raw_json = script.string or script.get_text("", strip=False)
+            match = re.search(r"\bwindow\.jsonData\s*=\s*", raw_json or "")
+            if not match:
+                continue
+            try:
+                payload, _ = json.JSONDecoder().raw_decode(raw_json[match.end():].lstrip())
+                landing = payload["bsData"]["superlanding"][0]
+                sections = landing["itemData"]["sections"]
+            except (json.JSONDecodeError, KeyError, IndexError, TypeError):
+                continue
+
+            section_text = []
+            for section in sections:
+                if not isinstance(section, dict) or section.get("type") != "text":
+                    continue
+                fragment = BeautifulSoup(str(section.get("content") or ""), "html.parser")
+                text = self._clean_text(fragment.get_text(" ", strip=True))
+                if text:
+                    section_text.append(text)
+            embedded_content = self._clean_text(" ".join(section_text))
+            if len(embedded_content) > len(content):
+                content = embedded_content
+        return content
 
     @staticmethod
     def _is_government_url(url: str) -> bool:

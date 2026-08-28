@@ -358,6 +358,84 @@ class CrawlerContentEnrichmentTests(unittest.TestCase):
         self.assertEqual(detail["content"], article_body)
         self.assertEqual(detail["body_content_length"], len(article_body))
 
+    def test_baijiahao_extracts_ordered_bjh_paragraphs_without_ssr_noise(self):
+        paragraphs = [
+            "第一段介绍事件背景和已经确认的公开信息。" * 5,
+            "第二段继续说明事件进展和相关主体的公开回应。" * 5,
+        ]
+        expected = " ".join(paragraphs)
+        html = f"""
+        <html><head><title>百家号合成文章</title></head><body>
+          <div id="ssr-content">
+            <div class="share-panel">分享、收藏和相关推荐等非正文噪音。</div>
+            <span class="bjh-p">{paragraphs[0]}</span>
+            <div class="recommend-panel">推荐阅读以及客户端打开提示。</div>
+            <span class="bjh-p">{paragraphs[1]}</span>
+          </div>
+        </body></html>
+        """
+        crawler = NewsCrawler()
+
+        detail = crawler._extract_article_content(
+            html,
+            "https://baijiahao.baidu.com/s?id=123456789",
+        )
+
+        self.assertEqual(detail["content"], expected)
+        self.assertEqual(detail["body_content_length"], len(expected))
+        self.assertEqual(
+            detail["body_content_sha256"],
+            crawler._body_content_fingerprint(expected),
+        )
+
+    def test_baijiahao_falls_back_to_window_json_data_text_sections(self):
+        text_sections = [
+            "脚本正文第一段包含事件起因和经过等公开事实。" * 5,
+            "脚本正文第二段包含后续进展和发布者补充说明。" * 5,
+        ]
+        ignored_image_text = "图片说明不应进入正文。" * 10
+        payload = {
+            "bsData": {
+                "superlanding": [{
+                    "itemData": {
+                        "sections": [
+                            {
+                                "type": "text",
+                                "content": f'<span class="bjh-p">{text_sections[0]}</span>',
+                            },
+                            {
+                                "type": "img",
+                                "content": f'<span class="bjh-p">{ignored_image_text}</span><img src="image.jpg">',
+                            },
+                            {
+                                "type": "text",
+                                "content": f'<span class="bjh-p">{text_sections[1]}</span>',
+                            },
+                        ]
+                    }
+                }]
+            }
+        }
+        expected = " ".join(text_sections)
+        html = (
+            "<html><head><title>百家号脚本合成文章</title>"
+            f"<script>window.jsonData = {json.dumps(payload, ensure_ascii=False)};</script>"
+            "</head><body><div id=\"ssr-content\">页面骨架和非正文噪音。</div></body></html>"
+        )
+        crawler = NewsCrawler()
+
+        detail = crawler._extract_article_content(
+            html,
+            "https://baijiahao.baidu.com/s?id=987654321",
+        )
+
+        self.assertEqual(detail["content"], expected)
+        self.assertEqual(detail["body_content_length"], len(expected))
+        self.assertEqual(
+            detail["body_content_sha256"],
+            crawler._body_content_fingerprint(expected),
+        )
+
     def test_newspaper4k_skips_non_government_page_when_builtin_body_is_usable(self):
         outcome = EnrichmentOutcome(
             adapter_name="newspaper4k",
