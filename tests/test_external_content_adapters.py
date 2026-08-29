@@ -459,11 +459,12 @@ class CrawlerContentEnrichmentTests(unittest.TestCase):
         self.assertEqual(len(adapters.newspaper.calls), 1)
 
     def test_newspaper4k_falls_back_for_short_non_government_news_body(self):
+        full_body = "newspaper4k 提取的完整公开新闻正文。" * 300
         outcome = EnrichmentOutcome(
             adapter_name="newspaper4k",
             available=True,
             attempted=True,
-            data={"title": "完整新闻", "content": "newspaper4k 提取的完整公开新闻正文。" * 12},
+            data={"title": "完整新闻", "content": full_body},
         )
         adapters = FakeContentAdapters(newspaper_outcome=outcome)
         crawler = NewsCrawler(external_content_adapters=adapters)
@@ -475,7 +476,15 @@ class CrawlerContentEnrichmentTests(unittest.TestCase):
         )
 
         self.assertEqual(detail["detail_source"], "newspaper4k")
-        self.assertIn("newspaper4k 提取的完整公开新闻正文", detail["content"])
+        with self.subTest(field="content"):
+            self.assertEqual(detail["content"], full_body)
+        with self.subTest(field="body_content_length"):
+            self.assertEqual(detail["body_content_length"], len(full_body))
+        with self.subTest(field="body_content_sha256"):
+            self.assertEqual(
+                detail["body_content_sha256"],
+                crawler._body_content_fingerprint(full_body),
+            )
         self.assertEqual(
             adapters.newspaper.calls[0][1],
             "https://news.example.com/article/short-body",

@@ -2402,12 +2402,15 @@ class CrawlerPolicyTests(unittest.TestCase):
 
         self.assertEqual(len(deduped), 2)
 
-    def test_deduplicate_uses_full_article_fingerprint_beyond_stored_excerpt(self):
+    def test_long_article_bodies_are_preserved_and_deduplicated_by_full_content(self):
         shared = "共同正文段落" * 700
+        bodies = []
+        details = []
         records = []
         for suffix in ("文章结尾甲", "文章结尾乙"):
+            body = f"{shared}{suffix}"
             detail = self.crawler._extract_article_content(
-                f"<html><body><article><p>{shared}{suffix}</p></article></body></html>",
+                f"<html><body><article><p>{body}</p></article></body></html>",
                 "https://example.com/article",
             )
             record = {
@@ -2418,9 +2421,18 @@ class CrawlerPolicyTests(unittest.TestCase):
             self.assertTrue(
                 self.crawler._apply_article_detail(record, detail, record["url"])
             )
+            bodies.append(body)
+            details.append(detail)
             records.append(record)
 
-        self.assertEqual(records[0]["content"], records[1]["content"])
+        for index, (body, detail, record) in enumerate(zip(bodies, details, records)):
+            with self.subTest(index=index, layer="extracted_detail"):
+                self.assertEqual(detail["content"], body)
+            with self.subTest(index=index, layer="stored_record"):
+                self.assertEqual(record["content"], body)
+            with self.subTest(index=index, layer="stored_length"):
+                self.assertEqual(len(record["content"]), record["body_content_length"])
+
         self.assertEqual(len(self.crawler._deduplicate_results(records)), 2)
 
     def test_deduplicate_merges_identical_long_article_fingerprints(self):

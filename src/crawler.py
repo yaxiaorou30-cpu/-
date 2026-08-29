@@ -4412,7 +4412,7 @@ class NewsCrawler:
             body_content_length = int(detail.get("body_content_length") or len(content))
         except (TypeError, ValueError):
             body_content_length = len(content)
-        record["content"] = content[:2000]
+        record["content"] = content
         record["body_content_sha256"] = fingerprint
         record["body_content_length"] = max(len(content), body_content_length)
         if detail.get("title") and len(record.get("title", "")) < 12:
@@ -4511,7 +4511,7 @@ class NewsCrawler:
             "title": title,
             "source": source,
             "pub_time": pub_time,
-            "content": full_content[:3000],
+            "content": full_content,
             "body_content_sha256": self._body_content_fingerprint(full_content),
             "body_content_length": len(full_content),
         }
@@ -4530,7 +4530,7 @@ class NewsCrawler:
                 external = outcome.data
                 external_content = self._clean_text(external.get("content", ""))
                 if len(external_content) > result["body_content_length"]:
-                    result["content"] = external_content[:3000]
+                    result["content"] = external_content
                     result["body_content_sha256"] = self._body_content_fingerprint(
                         external_content
                     )
