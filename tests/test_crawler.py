@@ -31,10 +31,16 @@ from src.source_policy import AUTHORIZED_SESSION_ACCESS_MODE, SourceAccessPolicy
 from tests.helpers import AllowAllSourcePolicy
 
 
+class DisabledBaiduSearchAdapter:
+    def search(self, *args, **kwargs):
+        return SimpleNamespace(error="disabled in unit test", items=[])
+
+
 class NewsCrawler(ProductionNewsCrawler):
     def __init__(self, *args, **kwargs):
         kwargs.setdefault("source_policy", AllowAllSourcePolicy())
         kwargs.setdefault("use_external_social_adapters", False)
+        kwargs.setdefault("baidu_web_search_adapter", DisabledBaiduSearchAdapter())
         super().__init__(*args, **kwargs)
 
 
@@ -366,6 +372,36 @@ class CrawlerParsingTests(unittest.TestCase):
         self.assertEqual(records[0]["content"], "正文采集链获得的完整博客正文")
         self.assertEqual(records[0]["detail_source"], "scrapling_stealth")
         self.assertEqual(records[0]["source_group"], "public_news")
+
+    @patch.dict("os.environ", {"BAIDU_QIANFAN_API_KEY": "unit-test-key"})
+    def test_unit_test_crawler_does_not_auto_call_baidu_adapter_from_environment(self):
+        with patch(
+            "src.crawler.BaiduWebSearchAdapter.search",
+            return_value=SimpleNamespace(error="", items=[]),
+        ) as baidu_search:
+            crawler = NewsCrawler()
+            crawler.anti_crawl.delay = lambda: None
+            request = next(
+                item
+                for item in crawler._build_public_news_source_requests(
+                    keyword="测试隔离",
+                    province=None,
+                    city=None,
+                )
+                if item["parser"] == "baidu_qianfan_web_search"
+            )
+
+            crawler._collect_from_source_requests(
+                source_requests=[request],
+                keyword="测试隔离",
+                region="全国",
+                collect_level="最小采集",
+                start_time=None,
+                end_time=None,
+                remaining=1,
+            )
+
+        baidu_search.assert_not_called()
 
     def test_bing_news_rss_deduplicates_wrappers_for_same_article(self):
         rss = """<?xml version="1.0" encoding="utf-8"?>
