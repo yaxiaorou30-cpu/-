@@ -1662,7 +1662,7 @@ class NewsCrawler:
         )
         original_content = record.get("content", "")
         if detail.get("content") and len(detail["content"]) > len(record.get("content", "")):
-            record["content"] = detail["content"][:3000]
+            record["content"] = detail["content"]
         if detail.get("title") and len(record.get("title", "")) < 12:
             record["title"] = detail["title"][:160]
         if detail.get("pub_time"):
@@ -1711,7 +1711,7 @@ class NewsCrawler:
             record["detail_error"] = "微博详情接口未返回正文"
             return
 
-        record["content"] = content[:3000]
+        record["content"] = content
         record["title"] = (detail.get("title") or content[:80])[:160]
         if detail.get("author"):
             record["author"] = detail["author"]
@@ -1786,7 +1786,7 @@ class NewsCrawler:
         if title:
             record["title"] = title[:160]
         if content and len(content) > len(record.get("content", "")):
-            record["content"] = content[:3000]
+            record["content"] = content
         if detail.get("author"):
             record["author"] = self._clean_text(detail["author"])[:80]
         if detail.get("forum"):
@@ -1872,7 +1872,7 @@ class NewsCrawler:
         detail = extract_xiaohongshu_detail_from_html(html)
         content = self._clean_text(detail.get("content", ""))
         if content and len(content) > max(len(record.get("content", "")), 20):
-            record["content"] = content[:3000]
+            record["content"] = content
             record["detail_enriched"] = True
             record["detail_source"] = "xiaohongshu_detail"
         title = self._clean_text(detail.get("title", ""))

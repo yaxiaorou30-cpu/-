@@ -897,7 +897,7 @@ def extract_xiaohongshu_detail_from_html(html: str) -> Dict:
         if isinstance(payload, dict):
             return {
                 "title": clean_text(payload.get("title", ""))[:160],
-                "content": clean_text(payload.get("content", ""))[:3000],
+                "content": clean_text(payload.get("content", "")),
                 "author": clean_text(payload.get("author", ""))[:80],
                 "author_url": str(payload.get("author_url") or ""),
                 "pub_time": clean_text(payload.get("pub_time", "")),
@@ -965,7 +965,7 @@ def extract_xiaohongshu_detail_from_html(html: str) -> Dict:
 
     return {
         "title": title[:160],
-        "content": content[:3000],
+        "content": content,
         "author": author[:80],
         "author_url": author_url,
         "pub_time": pub_time,
@@ -1345,7 +1345,7 @@ def extract_article_from_html(html: str) -> Dict:
     page_text = clean_text(soup.get_text(" ", strip=True))
     return {
         "title": title[:160],
-        "content": (content or page_text)[:3000],
+        "content": content or page_text,
         "pub_time": extract_published_time_from_soup(soup),
     }
 
@@ -1377,7 +1377,7 @@ def extract_tieba_detail_from_html(html: str) -> Dict:
         if len(text) < 10 or text in seen:
             continue
         seen.add(text)
-        posts.append({"content": text[:1200]})
+        posts.append({"content": text})
         if len(posts) >= 10:
             break
 
@@ -1387,7 +1387,7 @@ def extract_tieba_detail_from_html(html: str) -> Dict:
         if len(text) < 4 or text in seen:
             continue
         seen.add(text)
-        comments.append({"content": text[:500]})
+        comments.append({"content": text})
         if len(comments) >= 10:
             break
 
@@ -1395,7 +1395,7 @@ def extract_tieba_detail_from_html(html: str) -> Dict:
     content = "\n".join(item["content"] for item in posts[:5])
     return {
         "title": title[:160],
-        "content": content[:3000],
+        "content": content,
         "discussion_samples": samples[:10],
     }
 
@@ -1423,7 +1423,7 @@ def extract_weibo_detail_from_payload(payload: Dict) -> Dict:
     mblogid = str(payload.get("mblogid") or "")
     return {
         "title": content[:80],
-        "content": content[:3000],
+        "content": content,
         "author": author[:80],
         "author_url": f"https://weibo.com/u/{uid}" if uid else "",
         "pub_time": clean_text(payload.get("created_at") or ""),
