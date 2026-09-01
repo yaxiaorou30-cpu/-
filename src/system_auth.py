@@ -1,4 +1,4 @@
-"""Local system-account authentication shared by the Web UI and Tk GUI."""
+"""Local system-account authentication for the Web UI."""
 
 from __future__ import annotations
 
