@@ -1,0 +1,2 @@
+# Scrapling 必须与主程序运行时隔离，避免 Playwright/Patchright 依赖互相覆盖。
+scrapling[fetchers]==0.4.14

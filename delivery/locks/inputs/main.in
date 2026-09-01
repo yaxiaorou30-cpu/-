@@ -1,0 +1,11 @@
+# Windows 11 x64 / CPython 3.13 主程序交付运行时。
+# 直接依赖固定为 b7a95a7 基线验证环境中的版本；传递依赖由 compile-locks.ps1 锁定。
+PyYAML==6.0.3
+python-docx==1.2.0
+jieba==0.42.1
+requests==2.32.5
+beautifulsoup4==4.13.5
+Jinja2==3.1.6
+cryptography==46.0.3
+playwright==1.61.0
+APScheduler==3.11.3

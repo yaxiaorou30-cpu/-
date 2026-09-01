@@ -1,0 +1,90 @@
+{
+  "schema_version": 1,
+  "target": {
+    "operating_system": "Windows 11",
+    "architecture": "x86_64",
+    "python": "CPython 3.13.9"
+  },
+  "artifact_policy": {
+    "required_components": [
+      "chromium",
+      "chromium-headless-shell",
+      "ffmpeg"
+    ],
+    "archive_download_and_sha256": "pending_d2_installer_prototype"
+  },
+  "runtimes": [
+    {
+      "id": "main-playwright",
+      "python_package": "playwright",
+      "package_version": "1.61.0",
+      "lock_file": "generated/main-win11-x64-py313.lock.txt",
+      "browsers_json_sha256": "ee39bc924bc3d1bd895626c2910f1292d109bbfeeb5abd113acb45e1951cc942",
+      "components": [
+        {
+          "name": "chromium",
+          "revision": "1228",
+          "browser_version": "149.0.7827.55"
+        },
+        {
+          "name": "chromium-headless-shell",
+          "revision": "1228",
+          "browser_version": "149.0.7827.55"
+        },
+        {
+          "name": "ffmpeg",
+          "revision": "1011",
+          "browser_version": null
+        }
+      ]
+    },
+    {
+      "id": "scrapling-playwright",
+      "python_package": "playwright",
+      "package_version": "1.62.0",
+      "lock_file": "generated/scrapling-win11-x64-py313.lock.txt",
+      "browsers_json_sha256": "f306eed529599b1eaf2f8a85db9de2b23e1a3fe36c2b66434b7c9434fb627a99",
+      "components": [
+        {
+          "name": "chromium",
+          "revision": "1234",
+          "browser_version": "151.0.7922.34"
+        },
+        {
+          "name": "chromium-headless-shell",
+          "revision": "1234",
+          "browser_version": "151.0.7922.34"
+        },
+        {
+          "name": "ffmpeg",
+          "revision": "1011",
+          "browser_version": null
+        }
+      ]
+    },
+    {
+      "id": "scrapling-patchright",
+      "python_package": "patchright",
+      "package_version": "1.62.2",
+      "lock_file": "generated/scrapling-win11-x64-py313.lock.txt",
+      "browsers_json_sha256": "f306eed529599b1eaf2f8a85db9de2b23e1a3fe36c2b66434b7c9434fb627a99",
+      "components": [
+        {
+          "name": "chromium",
+          "revision": "1234",
+          "browser_version": "151.0.7922.34"
+        },
+        {
+          "name": "chromium-headless-shell",
+          "revision": "1234",
+          "browser_version": "151.0.7922.34"
+        },
+        {
+          "name": "ffmpeg",
+          "revision": "1011",
+          "browser_version": null
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+# 固定源码 wheel 之外的 Bilibili CLI 独立运行依赖。
+# 不启用 audio 或 dev extras。
+# 17.4.2 是当前已验证子运行时版本；较旧 wheel 的发布元数据缺少运行依赖。
+bilibili-api-python==17.4.2
+click>=8.0
+rich>=13.0
+aiohttp>=3.0
+browser-cookie3>=0.19
+PyYAML>=6.0
+qrcode>=7.0

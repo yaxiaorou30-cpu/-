@@ -1,0 +1,7 @@
+# 固定源码 wheel 之外的 aiotieba 独立运行依赖（Python 3.13 分支）。
+# 不启用 img、img-gui 或 speedup extras。
+aiohttp>=3.11.0,<4
+beautifulsoup4>=4.7.1,<5
+lxml>=5.3.0,<7
+protobuf>=4.21.1,<8
+cryptography>=35.0.0,<50

@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "target": {
+    "operating_system": "Windows 11",
+    "architecture": "x86_64",
+    "python": "CPython 3.13.9"
+  },
+  "sources": [
+    {
+      "id": "bilibili-cli",
+      "package_name": "bilibili-cli",
+      "version": "0.6.2",
+      "license": "Apache-2.0",
+      "license_file": "LICENSE",
+      "repository_url": "https://github.com/public-clis/bilibili-cli",
+      "declared_repository_url": "https://github.com/jackwener/bilibili-cli",
+      "commit": "dbe28551930df43b633baa52e9639832aeada967",
+      "source_tree_tracked_clean": true,
+      "runtime_lock": "generated/bilibili-cli-runtime-win11-x64-py313.lock.txt",
+      "known_transitive_license_review": {
+        "package_name": "bilibili-api-python",
+        "version": "17.4.2",
+        "license": "GPL-3.0-or-later",
+        "status": "pending_d4_distribution_review"
+      },
+      "wheel": {
+        "status": "pending_d2_build",
+        "filename": null,
+        "sha256": null
+      }
+    },
+    {
+      "id": "newspaper4k",
+      "package_name": "newspaper4k",
+      "version": "0.9.6",
+      "license": "MIT",
+      "license_file": "LICENSE",
+      "repository_url": "https://github.com/AndyTheFactory/newspaper4k",
+      "commit": "b53a81fc01ff54601faaeae68d6b4a6d2f18efcb",
+      "source_tree_tracked_clean": true,
+      "runtime_lock": "generated/newspaper4k-runtime-win11-x64-py313.lock.txt",
+      "wheel": {
+        "status": "pending_d2_build",
+        "filename": null,
+        "sha256": null
+      }
+    },
+    {
+      "id": "aiotieba",
+      "package_name": "aiotieba",
+      "version": "4.7.2a8",
+      "license": "Unlicense",
+      "license_file": "LICENSE",
+      "repository_url": "https://github.com/lumina37/aiotieba",
+      "commit": "bae68256fd250d5178e1447899ffa155c77eda38",
+      "source_tree_tracked_clean": true,
+      "runtime_lock": "generated/aiotieba-runtime-win11-x64-py313.lock.txt",
+      "wheel": {
+        "status": "pending_d2_build",
+        "filename": null,
+        "sha256": null
+      }
+    }
+  ]
+}
