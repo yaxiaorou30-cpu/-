@@ -160,32 +160,43 @@
   "toolArtifacts": [
     {
       "id": "python-runtime-archive",
-      "status": "pending-d2-download-lock",
+      "status": "ready",
       "version": "cpython-3.13.9-x64",
       "use": "end-user-private-runtime",
-      "url": null,
-      "fileName": null,
-      "sha256": null
+      "releaseTag": "20251120",
+      "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20251120/cpython-3.13.9%2B20251120-x86_64-pc-windows-msvc-install_only_stripped.tar.gz",
+      "fileName": "cpython-3.13.9+20251120-x86_64-pc-windows-msvc-install_only_stripped.tar.gz",
+      "size": 21638637,
+      "sha256": "f4c22b31ddbf8d7824cbcba2d8707621c2c8fab1fb6d2c1810c2bb0304d8e9a8",
+      "executableSha256": "30557F6B49FC4B6574CA3EF91EDB8D148CFC989DD75C846F5639B76DB800E7E2"
     },
     {
       "id": "uv-runtime-archive",
-      "status": "pending-d2-download-lock",
+      "status": "ready",
       "version": "0.10.8",
       "use": "end-user-runtime-provisioning",
       "expectedExecutableSha256": "067CF5D81A2DC006C1C76FA160B4DA96A35BC80900C22FAED7ACFC52510FCDF5",
-      "url": null,
-      "fileName": null,
-      "sha256": null
+      "url": "https://github.com/astral-sh/uv/releases/download/0.10.8/uv-x86_64-pc-windows-msvc.zip",
+      "fileName": "uv-x86_64-pc-windows-msvc.zip",
+      "size": 22159808,
+      "sha256": "2e70ecd22196cbd9d14eefb700814bcafc5b75a0d8275b52e8402e5fe256d928",
+      "checksumFileUrl": "https://github.com/astral-sh/uv/releases/download/0.10.8/uv-x86_64-pc-windows-msvc.zip.sha256",
+      "checksumFileSha256": "2e88eed6aeb83a982d23eaa4727238d7843ca04bd8a9b27545024643be4b77b7"
     },
     {
       "id": "inno-setup-builder",
-      "status": "pending-d2-download-lock",
+      "status": "ready",
       "version": "7.1.0-x64",
       "use": "build-machine-only",
       "licenseReview": "pending-d4",
-      "url": null,
-      "fileName": null,
-      "sha256": null
+      "url": "https://github.com/jrsoftware/issrc/releases/download/is-7_1_0/innosetup-7.1.0-x64.exe",
+      "fileName": "innosetup-7.1.0-x64.exe",
+      "size": 14304168,
+      "sha256": "0362a383ed217d4c4239b5933866dd96d3eb2102737da92f80f6057a4b40df2f",
+      "signatureFileUrl": "https://github.com/jrsoftware/issrc/releases/download/is-7_1_0/innosetup-7.1.0-x64.exe.issig",
+      "signatureFileSha256": "3f95d2c22f657b6064b6f1447cbca41ba61a765f6157f0b4995a795d3828b929",
+      "authenticodeSigner": "Pyrsys B.V.",
+      "authenticodeThumbprint": "E0AB19C8D38CBF9C44709925122A7A02F8C70CB7"
     }
   ]
 }

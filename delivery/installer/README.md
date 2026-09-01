@@ -32,7 +32,7 @@ INSTALLER_CONTRACT=PASS
 powershell -NoProfile -ExecutionPolicy Bypass -File .\delivery\installer\tests\verify-artifact-contract.ps1 -Mode PlanOnly
 ```
 
-当前预期为 `PENDING_ARTIFACTS=14`、`NETWORK_ACTIONS=0`、`FILESYSTEM_MUTATIONS=0`。这 14 项是 6 个待预构建 wheel、5 个待锁定浏览器压缩包和 3 个待锁定工具归档。
+当前预期为 `PENDING_ARTIFACTS=11`、`NETWORK_ACTIONS=0`、`FILESYSTEM_MUTATIONS=0`。工具归档已经锁定；剩余 11 项是 6 个待预构建 wheel 和 5 个待锁定浏览器压缩包。
 
 严格发布门禁当前必须失败：
 

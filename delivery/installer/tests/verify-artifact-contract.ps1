@@ -154,6 +154,33 @@ foreach ($Tool in @($Manifest.toolArtifacts)) {
         throw "Unexpected tool artifact: $($Tool.id)."
     }
     Assert-ArtifactState $Tool "toolArtifacts.$($Tool.id)"
+    switch ($Tool.id) {
+        "python-runtime-archive" {
+            Assert-Equal $Tool.version "cpython-3.13.9-x64" "toolArtifacts.python.version"
+            Assert-Equal $Tool.url "https://github.com/astral-sh/python-build-standalone/releases/download/20251120/cpython-3.13.9%2B20251120-x86_64-pc-windows-msvc-install_only_stripped.tar.gz" "toolArtifacts.python.url"
+            Assert-Equal $Tool.fileName "cpython-3.13.9+20251120-x86_64-pc-windows-msvc-install_only_stripped.tar.gz" "toolArtifacts.python.fileName"
+            Assert-Equal $Tool.size 21638637 "toolArtifacts.python.size"
+            Assert-Equal $Tool.sha256 "f4c22b31ddbf8d7824cbcba2d8707621c2c8fab1fb6d2c1810c2bb0304d8e9a8" "toolArtifacts.python.sha256"
+            Assert-Equal $Tool.executableSha256 "30557F6B49FC4B6574CA3EF91EDB8D148CFC989DD75C846F5639B76DB800E7E2" "toolArtifacts.python.executableSha256"
+        }
+        "uv-runtime-archive" {
+            Assert-Equal $Tool.version "0.10.8" "toolArtifacts.uv.version"
+            Assert-Equal $Tool.url "https://github.com/astral-sh/uv/releases/download/0.10.8/uv-x86_64-pc-windows-msvc.zip" "toolArtifacts.uv.url"
+            Assert-Equal $Tool.fileName "uv-x86_64-pc-windows-msvc.zip" "toolArtifacts.uv.fileName"
+            Assert-Equal $Tool.size 22159808 "toolArtifacts.uv.size"
+            Assert-Equal $Tool.sha256 "2e70ecd22196cbd9d14eefb700814bcafc5b75a0d8275b52e8402e5fe256d928" "toolArtifacts.uv.sha256"
+            Assert-Equal $Tool.expectedExecutableSha256 "067CF5D81A2DC006C1C76FA160B4DA96A35BC80900C22FAED7ACFC52510FCDF5" "toolArtifacts.uv.executableSha256"
+        }
+        "inno-setup-builder" {
+            Assert-Equal $Tool.version "7.1.0-x64" "toolArtifacts.inno.version"
+            Assert-Equal $Tool.url "https://github.com/jrsoftware/issrc/releases/download/is-7_1_0/innosetup-7.1.0-x64.exe" "toolArtifacts.inno.url"
+            Assert-Equal $Tool.fileName "innosetup-7.1.0-x64.exe" "toolArtifacts.inno.fileName"
+            Assert-Equal $Tool.size 14304168 "toolArtifacts.inno.size"
+            Assert-Equal $Tool.sha256 "0362a383ed217d4c4239b5933866dd96d3eb2102737da92f80f6057a4b40df2f" "toolArtifacts.inno.sha256"
+            Assert-Equal $Tool.authenticodeSigner "Pyrsys B.V." "toolArtifacts.inno.authenticodeSigner"
+            Assert-Equal $Tool.authenticodeThumbprint "E0AB19C8D38CBF9C44709925122A7A02F8C70CB7" "toolArtifacts.inno.authenticodeThumbprint"
+        }
+    }
 }
 
 $PendingCount = @(
