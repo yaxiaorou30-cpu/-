@@ -1,0 +1,115 @@
+{
+  "schemaVersion": 1,
+  "product": {
+    "appId": "E30332CB-8174-4589-978B-7ED8546CBD60",
+    "displayName": "AI+舆情检测系统",
+    "baselineCommit": "b7a95a783088dd1b7ca5b79dc33302fa102479c9",
+    "platform": "windows-11-x64"
+  },
+  "install": {
+    "scope": "current-user",
+    "root": "%LOCALAPPDATA%\\Programs\\AI-Opinion-Monitor",
+    "deliveryMode": "online",
+    "copyPolicy": "allowlist-only",
+    "requiresAdministrator": false,
+    "modifiesPath": false,
+    "registersPython": false
+  },
+  "runtime": {
+    "python": {
+      "implementation": "cpython",
+      "version": "3.13.9",
+      "architecture": "x64",
+      "installDirectory": ".runtime\\python",
+      "managedBy": "uv",
+      "useSystemPython": false
+    },
+    "uv": {
+      "version": "0.10.8",
+      "executableSha256": "067CF5D81A2DC006C1C76FA160B4DA96A35BC80900C22FAED7ACFC52510FCDF5"
+    },
+    "privateEnvironmentPaths": [
+      ".venv",
+      ".scrapling-venv",
+      "opensource_candidates\\bilibili-cli\\.venv",
+      "opensource_candidates\\newspaper4k\\.venv",
+      "opensource_candidates\\aiotieba\\.venv"
+    ]
+  },
+  "launch": {
+    "interpreter": ".venv\\Scripts\\python.exe",
+    "entrypoint": "web_app.py",
+    "host": "127.0.0.1",
+    "basePort": 8765,
+    "portSearchCount": 20,
+    "healthPath": "/api/auth/status",
+    "processWindowStyle": "hidden",
+    "stopMode": "verified-pid-termination",
+    "allowSystemPythonFallback": false,
+    "claimsGracefulExternalStop": false,
+    "arguments": [
+      "--host",
+      "127.0.0.1",
+      "--port",
+      "8765",
+      "--no-browser"
+    ]
+  },
+  "userData": {
+    "installRelativePaths": [
+      "data",
+      "output"
+    ],
+    "externalPaths": [
+      "%LOCALAPPDATA%\\AI-Opinion-Monitor\\sensitive"
+    ],
+    "overwriteDuringRepair": false,
+    "overwriteDuringUpgrade": false,
+    "removeDuringUninstall": false,
+    "offerRemovalOption": false
+  },
+  "credentials": {
+    "installerCollectsValues": false,
+    "packageContainsValues": false,
+    "configurationMethod": "windows-user-environment-variables-documented-only",
+    "environmentVariableNames": [
+      "BAIDU_QIANFAN_API_KEY",
+      "DEEPSEEK_API_KEY"
+    ]
+  },
+  "browser": {
+    "installDirectory": ".runtime\\browsers",
+    "environmentVariableName": "PLAYWRIGHT_BROWSERS_PATH",
+    "useSharedSystemCache": false
+  },
+  "adapterDeliveryMatrix": {
+    "scrapling": "prototype-target",
+    "bilibili-cli": "prototype-only-pending-d4-license",
+    "newspaper4k": "prototype-target",
+    "aiotieba": "prototype-target",
+    "xhs-cli": "not-delivered-source-policy-disabled",
+    "crawl4weibo": "not-delivered-source-policy-disabled"
+  },
+  "workspaceSourceExclusions": [
+    ".git/",
+    ".agents/",
+    ".codex/",
+    ".codex_tmp/",
+    "requirements/",
+    "data/",
+    "output/",
+    ".venv/",
+    ".scrapling-venv/",
+    ".scrapling-runtime/",
+    "opensource_candidates/",
+    "tests/",
+    "启动.bat",
+    "gui.py",
+    "启动传统GUI.bat"
+  ],
+  "releaseReadiness": {
+    "state": "blocked-until-artifacts-tests-licenses-and-user-approval",
+    "mayBuildInternalPrototype": true,
+    "mayPublish": false
+  }
+}
