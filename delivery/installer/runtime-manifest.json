@@ -1,0 +1,191 @@
+{
+  "schemaVersion": 1,
+  "target": {
+    "platform": "windows-11-x64",
+    "python": "cpython-3.13.9-x64"
+  },
+  "installPolicy": {
+    "networkAllowed": true,
+    "endUserBuildAllowed": false,
+    "requireHashes": true,
+    "onlyBinary": true
+  },
+  "dependencyLocks": [
+    {
+      "id": "main",
+      "path": "../locks/generated/main-win11-x64-py313.lock.txt",
+      "sha256": "6563e6bffab7b96a7f4a3dd538626aa691af0a34c649eabe3041980b6e536d6f",
+      "installToEndUser": true
+    },
+    {
+      "id": "test",
+      "path": "../locks/generated/test-win11-x64-py313.lock.txt",
+      "sha256": "7c794c8f11dccb06645c6c29be0a4bda0dcac0fe0bade767bd5011193fdc50f3",
+      "installToEndUser": false
+    },
+    {
+      "id": "scrapling",
+      "path": "../locks/generated/scrapling-win11-x64-py313.lock.txt",
+      "sha256": "63b8ece936586663d224c959b6a41efdbd5f1f5a592e439dbbf3853cbf628480",
+      "installToEndUser": true
+    },
+    {
+      "id": "bilibili-cli-runtime",
+      "path": "../locks/generated/bilibili-cli-runtime-win11-x64-py313.lock.txt",
+      "sha256": "3011e71d1d4e6e80fa979526806907a6937c7f89dfd47ee16675f481a818e079",
+      "installToEndUser": true
+    },
+    {
+      "id": "newspaper4k-runtime",
+      "path": "../locks/generated/newspaper4k-runtime-win11-x64-py313.lock.txt",
+      "sha256": "176e8d005c8310df02cdb9b3c179c71a4ceae807d6d3367d0711bfabe3121a6a",
+      "installToEndUser": true
+    },
+    {
+      "id": "aiotieba-runtime",
+      "path": "../locks/generated/aiotieba-runtime-win11-x64-py313.lock.txt",
+      "sha256": "dfbcc13c5bc6e109bd399b110da3d3715211494d5466bf414f24ad419b961d43",
+      "installToEndUser": true
+    }
+  ],
+  "wheelArtifacts": [
+    {
+      "id": "jieba-0.42.1",
+      "status": "pending-d2-build",
+      "sourceType": "pypi-sdist",
+      "sourceSha256": "055ca12f62674fafed09427f176506079bc135638a14e23e25be909131928db2",
+      "fileName": null,
+      "sha256": null
+    },
+    {
+      "id": "qrcode-terminal-0.8",
+      "status": "pending-d2-build",
+      "sourceType": "pypi-sdist",
+      "sourceSha256": "1e2b69e62b29a13bb9e0a5b828aec682421ced1418b086d39a893912643f1f13",
+      "fileName": null,
+      "sha256": null
+    },
+    {
+      "id": "bilibili-api-python-17.4.2",
+      "status": "pending-d2-build",
+      "sourceType": "pypi-sdist",
+      "sourceSha256": "3ec62eaad920876607103781741642214339e626d84a22dab168882761e2d4b5",
+      "license": "GPL-3.0-or-later",
+      "distributionGate": "pending-d4-license-review",
+      "fileName": null,
+      "sha256": null
+    },
+    {
+      "id": "bilibili-cli-0.6.2",
+      "status": "pending-d2-build",
+      "sourceType": "git-commit",
+      "sourceCommit": "dbe28551930df43b633baa52e9639832aeada967",
+      "fileName": null,
+      "sha256": null
+    },
+    {
+      "id": "newspaper4k-0.9.6",
+      "status": "pending-d2-build",
+      "sourceType": "git-commit",
+      "sourceCommit": "b53a81fc01ff54601faaeae68d6b4a6d2f18efcb",
+      "fileName": null,
+      "sha256": null
+    },
+    {
+      "id": "aiotieba-4.7.2a8",
+      "status": "pending-d2-build",
+      "sourceType": "git-commit",
+      "sourceCommit": "bae68256fd250d5178e1447899ffa155c77eda38",
+      "requiresBuildToolchain": true,
+      "fileName": null,
+      "sha256": null
+    }
+  ],
+  "browserArtifacts": [
+    {
+      "id": "chromium-1228-win64",
+      "status": "pending-d2-download-lock",
+      "consumer": "playwright-1.61.0",
+      "browserVersion": "149.0.7827.55",
+      "url": null,
+      "fileName": null,
+      "sha256": null
+    },
+    {
+      "id": "chromium-headless-shell-1228-win64",
+      "status": "pending-d2-download-lock",
+      "consumer": "playwright-1.61.0",
+      "browserVersion": "149.0.7827.55",
+      "url": null,
+      "fileName": null,
+      "sha256": null
+    },
+    {
+      "id": "chromium-1234-win64",
+      "status": "pending-d2-download-lock",
+      "consumers": [
+        "playwright-1.62.0",
+        "patchright-1.62.2"
+      ],
+      "browserVersion": "151.0.7922.34",
+      "url": null,
+      "fileName": null,
+      "sha256": null
+    },
+    {
+      "id": "chromium-headless-shell-1234-win64",
+      "status": "pending-d2-download-lock",
+      "consumers": [
+        "playwright-1.62.0",
+        "patchright-1.62.2"
+      ],
+      "browserVersion": "151.0.7922.34",
+      "url": null,
+      "fileName": null,
+      "sha256": null
+    },
+    {
+      "id": "ffmpeg-1011-win64",
+      "status": "pending-d2-download-lock",
+      "consumers": [
+        "playwright-1.61.0",
+        "playwright-1.62.0",
+        "patchright-1.62.2"
+      ],
+      "url": null,
+      "fileName": null,
+      "sha256": null
+    }
+  ],
+  "toolArtifacts": [
+    {
+      "id": "python-runtime-archive",
+      "status": "pending-d2-download-lock",
+      "version": "cpython-3.13.9-x64",
+      "use": "end-user-private-runtime",
+      "url": null,
+      "fileName": null,
+      "sha256": null
+    },
+    {
+      "id": "uv-runtime-archive",
+      "status": "pending-d2-download-lock",
+      "version": "0.10.8",
+      "use": "end-user-runtime-provisioning",
+      "expectedExecutableSha256": "067CF5D81A2DC006C1C76FA160B4DA96A35BC80900C22FAED7ACFC52510FCDF5",
+      "url": null,
+      "fileName": null,
+      "sha256": null
+    },
+    {
+      "id": "inno-setup-builder",
+      "status": "pending-d2-download-lock",
+      "version": "7.1.0-x64",
+      "use": "build-machine-only",
+      "licenseReview": "pending-d4",
+      "url": null,
+      "fileName": null,
+      "sha256": null
+    }
+  ]
+}

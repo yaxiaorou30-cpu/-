@@ -26,6 +26,22 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\delivery\installer\tests\v
 INSTALLER_CONTRACT=PASS
 ```
 
+只读检查当前制品计划：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\delivery\installer\tests\verify-artifact-contract.ps1 -Mode PlanOnly
+```
+
+当前预期为 `PENDING_ARTIFACTS=14`、`NETWORK_ACTIONS=0`、`FILESYSTEM_MUTATIONS=0`。这 14 项是 6 个待预构建 wheel、5 个待锁定浏览器压缩包和 3 个待锁定工具归档。
+
+严格发布门禁当前必须失败：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\delivery\installer\tests\verify-artifact-contract.ps1 -Mode ReleaseReady
+```
+
+只有所有制品都具备不可变来源、文件名和 SHA256 后，`ReleaseReady` 才允许通过。
+
 ## 官方依据
 
 - uv 的 `python install --install-dir --no-bin --no-registry` 支持把 Python 放入指定私有目录且不写 Windows Python 注册信息：[uv 命令参考](https://docs.astral.sh/uv/reference/cli/#uv-python-install)。
@@ -33,6 +49,7 @@ INSTALLER_CONTRACT=PASS
 - Playwright 要求 Python 包版本与浏览器二进制配套，并支持用 `PLAYWRIGHT_BROWSERS_PATH` 指定私有浏览器目录：[Playwright 浏览器管理](https://playwright.dev/python/docs/browsers#managing-browser-binaries)。
 - Inno Setup 的 `PrivilegesRequired=lowest` 使用非管理员安装模式；开始菜单和卸载信息归当前用户：[Inno Setup 非管理员模式](https://jrsoftware.org/ishelp/topic_admininstallmode.htm)。
 - Inno Setup 明确提醒卸载时不要无警告删除用户放在应用目录中的数据：[Inno Setup UninstallDelete](https://jrsoftware.org/ishelp/topic_uninstalldeletesection.htm)。
+- 当前原型计划固定 Inno Setup 7.1.0 x64；其官方下载页同时提供版本、发布日期和签名验证入口：[Inno Setup 下载](https://jrsoftware.org/isdl.php)。商业使用许可是否适用继续作为 D4 审查项。
 
 ## 尚未完成
 
