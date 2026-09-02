@@ -44,7 +44,7 @@ powershell -ExecutionPolicy Bypass -File .\delivery\locks\verify-locks.ps1 -Base
 
 `bilibili-api-python==17.4.2` 的本地安装元数据声明为 `GPL-3.0-or-later`，已在 `external-sources.json` 标记为 D4 分发审查项。未完成许可证义务核对前，不得把 B站子运行时作为正式外发产物。
 
-Playwright/Patchright 的 Python 包版本、内置 `browsers.json` 哈希以及 Chromium、headless shell、FFmpeg、Winldd 修订号记录在 `browser-runtimes.json`。浏览器和 Windows 依赖检查压缩包尚未下载或打包；其下载地址和 SHA256 留到 D2 安装器原型阶段固定。
+Playwright/Patchright 的 Python 包版本、内置 `browsers.json` 哈希以及 Chromium、headless shell、FFmpeg、Winldd 修订号记录在 `browser-runtimes.json`。D2 已将 6 个归档的官方 URL、唯一文件名、大小与 SHA256 固定在 `delivery/installer/runtime-manifest.json`；归档仍只保留在系统临时目录，尚未打包。
 
 Playwright、Patchright 浏览器二进制不是 Python wheel，须在后续交付构建阶段按锁定包内的浏览器修订号另行固定和校验；它们不由本目录的 Python 哈希锁覆盖。
 

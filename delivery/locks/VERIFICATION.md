@@ -4,7 +4,7 @@
 
 D1 已完成：Windows 11 x64 / CPython 3.13.9 的六个独立依赖集合已生成带 SHA256 的锁，并在仓库外的全新虚拟环境中完成严格同步、依赖检查和最小导入验证。当前 Web 主入口在隔离测试环境中成功绑定回环地址并返回 HTTP 200；短路径跟踪文件快照中全量回归为 `370 passed, 7 warnings`。
 
-本记录不表示已制作安装器或候选包。外部适配器 wheel、浏览器压缩包、安装器、交付白名单、合并、标签和发布均尚未执行。
+本记录不表示已制作安装器或候选包。剩余外部适配器 wheel、安装器、交付白名单、合并、标签和发布均尚未执行。
 
 ## 固定工具与解析边界
 
@@ -58,6 +58,6 @@ D1 已完成：Windows 11 x64 / CPython 3.13.9 的六个独立依赖集合已生
 
 - `external-sources.json` 已固定三个实际启用外部适配器的公开仓库、完整 commit、版本和许可证；D2 才构建并记录 wheel SHA256。
 - B站运行依赖 `bilibili-api-python==17.4.2` 的安装元数据为 `GPL-3.0-or-later`；D4 必须完成许可证和分发义务审查，审查前不得正式外发该子运行时。
-- `browser-runtimes.json` 已固定 Playwright/Patchright 包版本、`browsers.json` 哈希及 Chromium、headless shell、FFmpeg、Winldd 修订号；D2 才下载浏览器和 Windows 依赖检查压缩包并记录其来源与 SHA256。
+- `browser-runtimes.json` 已固定 Playwright/Patchright 包版本、`browsers.json` 哈希及 Chromium、headless shell、FFmpeg、Winldd 修订号；D2 已在安装器运行时清单中补全 6 个归档的官方来源、大小和 SHA256。
 - 未修改根目录旧 `requirements.txt`；安装器必须显式使用 `delivery/locks/generated/`，不能回退到旧清单。
 - `.codex_tmp/`、本机 `requirements/` 和 `data/` 未删除、覆盖、暂存或纳入任何产物。

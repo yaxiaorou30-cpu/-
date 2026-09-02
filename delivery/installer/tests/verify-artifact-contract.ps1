@@ -329,7 +329,7 @@ $ExpectedBrowserIds = @(
 )
 $ExpectedBrowsers = @{
     "chromium-1228-win64" = @{
-        status = "pending-d2-download-hash"
+        status = "ready"
         revision = "1228"
         browserVersion = "149.0.7827.55"
         upstreamFileName = "chrome-win64.zip"
@@ -337,7 +337,7 @@ $ExpectedBrowsers = @{
         url = "https://cdn.playwright.dev/builds/cft/149.0.7827.55/win64/chrome-win64.zip"
     }
     "chromium-headless-shell-1228-win64" = @{
-        status = "pending-d2-download-hash"
+        status = "ready"
         revision = "1228"
         browserVersion = "149.0.7827.55"
         upstreamFileName = "chrome-headless-shell-win64.zip"
@@ -345,7 +345,7 @@ $ExpectedBrowsers = @{
         url = "https://cdn.playwright.dev/builds/cft/149.0.7827.55/win64/chrome-headless-shell-win64.zip"
     }
     "chromium-1234-win64" = @{
-        status = "pending-d2-download-hash"
+        status = "ready"
         revision = "1234"
         browserVersion = "151.0.7922.34"
         upstreamFileName = "chrome-win64.zip"
@@ -353,7 +353,7 @@ $ExpectedBrowsers = @{
         url = "https://cdn.playwright.dev/builds/cft/151.0.7922.34/win64/chrome-win64.zip"
     }
     "chromium-headless-shell-1234-win64" = @{
-        status = "pending-d2-download-hash"
+        status = "ready"
         revision = "1234"
         browserVersion = "151.0.7922.34"
         upstreamFileName = "chrome-headless-shell-win64.zip"
@@ -361,7 +361,7 @@ $ExpectedBrowsers = @{
         url = "https://cdn.playwright.dev/builds/cft/151.0.7922.34/win64/chrome-headless-shell-win64.zip"
     }
     "ffmpeg-1011-win64" = @{
-        status = "pending-d2-download-hash"
+        status = "ready"
         revision = "1011"
         browserVersion = $null
         upstreamFileName = "ffmpeg-win64.zip"
@@ -369,7 +369,7 @@ $ExpectedBrowsers = @{
         url = "https://cdn.playwright.dev/dbazure/download/playwright/builds/ffmpeg/1011/ffmpeg-win64.zip"
     }
     "winldd-1007-win64" = @{
-        status = "pending-d2-download-hash"
+        status = "ready"
         revision = "1007"
         browserVersion = $null
         upstreamFileName = "winldd-win64.zip"
@@ -377,7 +377,32 @@ $ExpectedBrowsers = @{
         url = "https://cdn.playwright.dev/dbazure/download/playwright/builds/winldd/1007/winldd-win64.zip"
     }
 }
-$ExpectedReadyBrowsers = @{}
+$ExpectedReadyBrowsers = @{
+    "chromium-1228-win64" = @{
+        size = 192511857
+        sha256 = "ebc0c2b75e2ea98151a7f18ff47037bfcbab44a8660e79b9ffa6520f9b7607ab"
+    }
+    "chromium-headless-shell-1228-win64" = @{
+        size = 119099822
+        sha256 = "5cfda0c763aa6a867ce2efad0c467e3220e9c5c01c4cba02fd57afe49ede5457"
+    }
+    "chromium-1234-win64" = @{
+        size = 201068834
+        sha256 = "045621e45a9dd27002c7fc1d8e10fe9f5f71f4cadbf44ec6f397f56f0179725c"
+    }
+    "chromium-headless-shell-1234-win64" = @{
+        size = 120106945
+        sha256 = "46cc69ef55ba29268ffe32dda4192a9d2165be42c3f4e923241153d519493aea"
+    }
+    "ffmpeg-1011-win64" = @{
+        size = 1411741
+        sha256 = "8d08827c019ad36e7b9d49d3648447d884534cb2acf200e71c715f6dd834cc50"
+    }
+    "winldd-1007-win64" = @{
+        size = 128684
+        sha256 = "0069f0d11d4ad6df068a068c003d22fe7dbec192a47bba64b2e115e9c8ce41d8"
+    }
+}
 Assert-Equal @($Manifest.browserArtifacts).Count $ExpectedBrowserIds.Count "browserArtifacts.Count"
 $ActualBrowserIds = @($Manifest.browserArtifacts | ForEach-Object { $_.id } | Sort-Object -Unique)
 Assert-Equal $ActualBrowserIds.Count $ExpectedBrowserIds.Count "browserArtifacts.UniqueCount"

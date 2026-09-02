@@ -127,13 +127,20 @@ try {
 
     $UnapprovedBrowserManifest = Get-Content -Raw -Encoding UTF8 -LiteralPath $SourceManifest | ConvertFrom-Json
     $FutureBrowser = @($UnapprovedBrowserManifest.browserArtifacts | Where-Object { $_.id -eq "chromium-1228-win64" })[0]
-    $FutureBrowser.status = "ready"
     $FutureBrowser.sha256 = "0" * 64
-    $FutureBrowser | Add-Member -NotePropertyName "size" -NotePropertyValue 1
+    $FutureBrowser.size = 1
     $UnapprovedBrowserFixture = New-FixturePath
     Write-Fixture $UnapprovedBrowserManifest $UnapprovedBrowserFixture
     $UnapprovedBrowserResult = Invoke-Contract -Mode "PlanOnly" -ManifestPath $UnapprovedBrowserFixture
-    Assert-FailedWith $UnapprovedBrowserResult "ready without a pinned approved contract" "Unapproved ready browser check"
+    Assert-FailedWith $UnapprovedBrowserResult "size must be '192511857'" "Forged ready browser check"
+
+    $ForgedBrowserHashManifest = Get-Content -Raw -Encoding UTF8 -LiteralPath $SourceManifest | ConvertFrom-Json
+    $ForgedBrowserHash = @($ForgedBrowserHashManifest.browserArtifacts | Where-Object { $_.id -eq "chromium-1228-win64" })[0]
+    $ForgedBrowserHash.sha256 = "0" * 64
+    $ForgedBrowserHashFixture = New-FixturePath
+    Write-Fixture $ForgedBrowserHashManifest $ForgedBrowserHashFixture
+    $ForgedBrowserHashResult = Invoke-Contract -Mode "PlanOnly" -ManifestPath $ForgedBrowserHashFixture
+    Assert-FailedWith $ForgedBrowserHashResult "sha256 must be" "Forged ready browser SHA256 check"
 
     $UnexpectedPendingManifest = Get-Content -Raw -Encoding UTF8 -LiteralPath $SourceManifest | ConvertFrom-Json
     $PendingWheel = @($UnexpectedPendingManifest.wheelArtifacts | Where-Object { $_.id -eq "newspaper4k-0.9.6" })[0]
@@ -147,7 +154,7 @@ try {
     Assert-FailedWith $ReleaseReadyResult "distribution gate\(s\) are not approved" "Current ReleaseReady gate"
 
     Write-Output "ARTIFACT_CONTRACT_NEGATIVE_TESTS=PASS"
-    Write-Output "CASES=10"
+    Write-Output "CASES=11"
     Write-Output "NETWORK_ACTIONS=0"
 }
 finally {

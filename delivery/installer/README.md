@@ -1,6 +1,6 @@
 # D2 Windows 在线安装器原型
 
-本目录已建立安装器合同，并锁定了构建工具与首批 3 个 wheel（2 个本地预构建、1 个 PyPI 官方 wheel）；它仍不是安装包，也不会修改本机 Python、PATH、注册表或 API Key。合同的作用是先把后续实现不得突破的边界变成可执行检查。
+本目录已建立安装器合同，并锁定了构建工具、首批 3 个 wheel（2 个本地预构建、1 个 PyPI 官方 wheel）与 6 个浏览器/工具归档；它仍不是安装包，也不会修改本机 Python、PATH、注册表或 API Key。合同的作用是先把后续实现不得突破的边界变成可执行检查。
 
 ## 已固定的边界
 
@@ -32,7 +32,7 @@ INSTALLER_CONTRACT=PASS
 powershell -NoProfile -ExecutionPolicy Bypass -File .\delivery\installer\tests\verify-artifact-contract.ps1 -Mode PlanOnly
 ```
 
-当前预期为 `PENDING_ARTIFACTS=9`、`UNAPPROVED_DISTRIBUTION_GATES=1`、`NETWORK_ACTIONS=0`、`FILESYSTEM_MUTATIONS=0`。工具归档、2 个本地预构建 wheel 和 1 个 PyPI 官方 wheel 已锁定；剩余 9 项是 3 个待预构建 wheel 和 6 个待锁定浏览器/依赖检查压缩包。Bilibili API wheel 虽已完成技术校验，D4 许可审查前仍不得外发。详细证据见 `WHEEL_VERIFICATION.md`。
+当前预期为 `PENDING_ARTIFACTS=3`、`UNAPPROVED_DISTRIBUTION_GATES=1`、`NETWORK_ACTIONS=0`、`FILESYSTEM_MUTATIONS=0`。工具归档、2 个本地预构建 wheel、1 个 PyPI 官方 wheel和 6 个浏览器/依赖检查压缩包已锁定；剩余 3 项均为待预构建的外部适配器 wheel。Bilibili API wheel 虽已完成技术校验，D4 许可审查前仍不得外发。详细证据见 `WHEEL_VERIFICATION.md` 和 `BROWSER_VERIFICATION.md`。
 
 运行负向用例，确认受保护路径、未批准的 `ready` 状态和许可门禁都不能被绕过：
 
@@ -40,7 +40,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\delivery\installer\tests\v
 powershell -NoProfile -ExecutionPolicy Bypass -File .\delivery\installer\tests\verify-artifact-contract-negative-tests.ps1
 ```
 
-预期输出包含 `ARTIFACT_CONTRACT_NEGATIVE_TESTS=PASS` 和 `CASES=10`。
+预期输出包含 `ARTIFACT_CONTRACT_NEGATIVE_TESTS=PASS` 和 `CASES=11`。
 
 严格发布门禁当前必须失败：
 
@@ -61,7 +61,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\delivery\installer\tests\v
 
 ## 尚未完成
 
-- 预构建剩余 3 个 wheel，并锁定 6 个浏览器/依赖检查压缩包的下载 URL、文件大小与 SHA256。
+- 预构建剩余 3 个外部适配器 wheel。
 - 实际准备私有运行时、加载器和 Inno Setup 定义。
 - 验证安装、重复启动、定向停止、修复、覆盖升级、数据保留和卸载。
 - 完成白名单、敏感扫描、许可证审查、干净 Win11 验收和用户批准门禁。

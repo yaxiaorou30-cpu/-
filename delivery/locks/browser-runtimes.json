@@ -12,7 +12,7 @@
       "ffmpeg",
       "winldd"
     ],
-    "archive_download_and_sha256": "pending_d2_installer_prototype"
+    "archive_download_and_sha256": "verified_d2_installer_prototype"
   },
   "runtimes": [
     {

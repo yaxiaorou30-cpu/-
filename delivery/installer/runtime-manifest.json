@@ -146,29 +146,31 @@
   "browserArtifacts": [
     {
       "id": "chromium-1228-win64",
-      "status": "pending-d2-download-hash",
+      "status": "ready",
       "consumer": "playwright-1.61.0",
       "revision": "1228",
       "browserVersion": "149.0.7827.55",
       "url": "https://cdn.playwright.dev/builds/cft/149.0.7827.55/win64/chrome-win64.zip",
       "upstreamFileName": "chrome-win64.zip",
       "fileName": "playwright-chromium-1228-win64.zip",
-      "sha256": null
+      "size": 192511857,
+      "sha256": "ebc0c2b75e2ea98151a7f18ff47037bfcbab44a8660e79b9ffa6520f9b7607ab"
     },
     {
       "id": "chromium-headless-shell-1228-win64",
-      "status": "pending-d2-download-hash",
+      "status": "ready",
       "consumer": "playwright-1.61.0",
       "revision": "1228",
       "browserVersion": "149.0.7827.55",
       "url": "https://cdn.playwright.dev/builds/cft/149.0.7827.55/win64/chrome-headless-shell-win64.zip",
       "upstreamFileName": "chrome-headless-shell-win64.zip",
       "fileName": "playwright-chromium-headless-shell-1228-win64.zip",
-      "sha256": null
+      "size": 119099822,
+      "sha256": "5cfda0c763aa6a867ce2efad0c467e3220e9c5c01c4cba02fd57afe49ede5457"
     },
     {
       "id": "chromium-1234-win64",
-      "status": "pending-d2-download-hash",
+      "status": "ready",
       "consumers": [
         "playwright-1.62.0",
         "patchright-1.62.2"
@@ -178,11 +180,12 @@
       "url": "https://cdn.playwright.dev/builds/cft/151.0.7922.34/win64/chrome-win64.zip",
       "upstreamFileName": "chrome-win64.zip",
       "fileName": "playwright-chromium-1234-win64.zip",
-      "sha256": null
+      "size": 201068834,
+      "sha256": "045621e45a9dd27002c7fc1d8e10fe9f5f71f4cadbf44ec6f397f56f0179725c"
     },
     {
       "id": "chromium-headless-shell-1234-win64",
-      "status": "pending-d2-download-hash",
+      "status": "ready",
       "consumers": [
         "playwright-1.62.0",
         "patchright-1.62.2"
@@ -192,11 +195,12 @@
       "url": "https://cdn.playwright.dev/builds/cft/151.0.7922.34/win64/chrome-headless-shell-win64.zip",
       "upstreamFileName": "chrome-headless-shell-win64.zip",
       "fileName": "playwright-chromium-headless-shell-1234-win64.zip",
-      "sha256": null
+      "size": 120106945,
+      "sha256": "46cc69ef55ba29268ffe32dda4192a9d2165be42c3f4e923241153d519493aea"
     },
     {
       "id": "ffmpeg-1011-win64",
-      "status": "pending-d2-download-hash",
+      "status": "ready",
       "consumers": [
         "playwright-1.61.0",
         "playwright-1.62.0",
@@ -207,11 +211,12 @@
       "url": "https://cdn.playwright.dev/dbazure/download/playwright/builds/ffmpeg/1011/ffmpeg-win64.zip",
       "upstreamFileName": "ffmpeg-win64.zip",
       "fileName": "playwright-ffmpeg-1011-win64.zip",
-      "sha256": null
+      "size": 1411741,
+      "sha256": "8d08827c019ad36e7b9d49d3648447d884534cb2acf200e71c715f6dd834cc50"
     },
     {
       "id": "winldd-1007-win64",
-      "status": "pending-d2-download-hash",
+      "status": "ready",
       "consumers": [
         "playwright-1.61.0",
         "playwright-1.62.0",
@@ -222,7 +227,8 @@
       "url": "https://cdn.playwright.dev/dbazure/download/playwright/builds/winldd/1007/winldd-win64.zip",
       "upstreamFileName": "winldd-win64.zip",
       "fileName": "playwright-winldd-1007-win64.zip",
-      "sha256": null
+      "size": 128684,
+      "sha256": "0069f0d11d4ad6df068a068c003d22fe7dbec192a47bba64b2e115e9c8ce41d8"
     }
   ],
   "toolArtifacts": [
