@@ -108,7 +108,7 @@
 
 - 已生成主程序、测试、Scrapling、Bilibili CLI、newspaper4k、aiotieba 六份 Windows/Python 哈希锁；同参数再次生成时 SHA256 不变。
 - 六个仓库外全新环境均为 `include-system-site-packages=false`，严格哈希同步、`uv pip check` 和导入 smoke 全部通过。
-- Playwright/Patchright 包版本及 Chromium、headless shell、FFmpeg 修订号已记录；浏览器压缩包下载和校验留在 D2。
+- Playwright/Patchright 包版本及 Chromium、headless shell、FFmpeg 修订号已记录；D2 复核后补充了 Windows 依赖检查所需的 Winldd 1007，压缩包下载和校验留在 D2。
 - 跟踪文件短路径快照硬排除三个本机目录，全量回归为 `370 passed, 7 warnings`；七条均为 Jieba 的上游 Python 3.13 语法警告。
 - 浏览器版回环启动 smoke 返回 HTTP 200。完整证据见 `delivery/locks/VERIFICATION.md`。
 
@@ -137,6 +137,8 @@
 **范围：** 中。
 
 **状态：** 进行中；只允许在本机和可丢弃目录生成内部原型，不上传 GitHub、不创建标签或 Release。
+
+**2026-09-02 检查点：** 已用两个独立临时构建环境、锁定且仅二进制的构建依赖、固定时间戳和离线目标构建，双次生成并锁定 Jieba 与 qrcode-terminal wheel。Bilibili API 的 sdist 双构建只作为对比证据；实物复核证明 PyPI 官方 wheel 的程序文件与 12 项运行依赖完整，因此正式路径改用官方 wheel并重验六套隔离锁。Bilibili API 的技术制品就绪不代表许可放行，D4 审查前继续禁止外发。浏览器清单补入 Playwright 在 Windows 正常依赖校验需要的 Winldd 1007；剩余 3 个外部适配器 wheel 和 6 个浏览器/依赖检查制品仍未锁定。
 
 ## D3：编写普通用户教程
 

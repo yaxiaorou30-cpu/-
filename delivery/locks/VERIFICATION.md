@@ -14,7 +14,7 @@ D1 已完成：Windows 11 x64 / CPython 3.13.9 的六个独立依赖集合已生
 - `uv.exe` SHA256：`067CF5D81A2DC006C1C76FA160B4DA96A35BC80900C22FAED7ACFC52510FCDF5`。
 - 包来源：公开 PyPI，禁用 keyring、额外索引、VCS、直接 URL 和本地路径来源。
 - 上传截止时间：`2026-08-29T15:59:59Z`，即北京时间 2026-08-29 23:59:59。
-- 通常只允许 wheel；已记录的官方源码包例外为 `jieba==0.42.1`、`bilibili-api-python==17.4.2`、`qrcode-terminal==0.8`。
+- 通常只允许 wheel；已记录的官方源码包例外为 `jieba==0.42.1` 和 `qrcode-terminal==0.8`。D2 实物复核后，`bilibili-api-python==17.4.2` 改用 PyPI 官方 wheel。
 
 ## 锁文件
 
@@ -34,9 +34,9 @@ D1 已完成：Windows 11 x64 / CPython 3.13.9 的六个独立依赖集合已生
 - 六个验证环境均以 `venv --copies --without-pip` 新建，`include-system-site-packages=false`。
 - 每个环境均以 `--require-hashes --strict --link-mode copy --no-sources` 从对应锁同步。
 - 六个环境的 `uv pip check` 和最小导入 smoke 全部通过。
-- 首次使用较长临时路径构建 `bilibili-api-python` 时触发 Windows 旧式路径长度问题；改用不超过 80 字符的临时工作目录和缓存目录后，同一版本和同一锁完整通过。验证脚本已将短路径要求设为前置检查。
+- 初次 D1 验证曾强制从 sdist 构建 `bilibili-api-python`，较长临时路径触发 Windows 旧式路径长度问题；D2 实物复核证明官方 wheel 的运行依赖和程序文件完整，因此当前策略已改为官方 wheel。验证脚本仍将短路径要求作为旧式源码构建的前置保护。
 - Jieba 和 WMI 在 Python 3.13 导入时产生上游 `SyntaxWarning`，未形成依赖冲突或导入失败。
-- 三个源码发布的 PEP 517 隔离构建工具不属于运行时哈希锁；D2 必须预构建 wheel 并记录 wheel SHA256，终端用户环境不得现场构建。
+- 两个源码发布的 PEP 517 隔离构建工具不属于运行时哈希锁；D2 必须预构建 wheel 并记录 wheel SHA256，终端用户环境不得现场构建。
 
 ## 跟踪文件快照与测试
 
@@ -58,6 +58,6 @@ D1 已完成：Windows 11 x64 / CPython 3.13.9 的六个独立依赖集合已生
 
 - `external-sources.json` 已固定三个实际启用外部适配器的公开仓库、完整 commit、版本和许可证；D2 才构建并记录 wheel SHA256。
 - B站运行依赖 `bilibili-api-python==17.4.2` 的安装元数据为 `GPL-3.0-or-later`；D4 必须完成许可证和分发义务审查，审查前不得正式外发该子运行时。
-- `browser-runtimes.json` 已固定 Playwright/Patchright 包版本、`browsers.json` 哈希及 Chromium、headless shell、FFmpeg 修订号；D2 才下载浏览器压缩包并记录其来源与 SHA256。
+- `browser-runtimes.json` 已固定 Playwright/Patchright 包版本、`browsers.json` 哈希及 Chromium、headless shell、FFmpeg、Winldd 修订号；D2 才下载浏览器和 Windows 依赖检查压缩包并记录其来源与 SHA256。
 - 未修改根目录旧 `requirements.txt`；安装器必须显式使用 `delivery/locks/generated/`，不能回退到旧清单。
 - `.codex_tmp/`、本机 `requirements/` 和 `data/` 未删除、覆盖、暂存或纳入任何产物。

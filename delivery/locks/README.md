@@ -11,7 +11,7 @@
 - `newspaper4k-runtime`：newspaper4k 固定源码 wheel 之外的独立运行依赖；
 - `aiotieba-runtime`：aiotieba 固定源码 wheel 之外的独立运行依赖。
 
-目标固定为 Windows 11 x64、CPython 3.13.9。锁文件包含 SHA256，且忽略 2026-08-29 23:59:59（北京时间）之后上传的文件。通常只接受 PyPI 二进制分发包，只有 `jieba==0.42.1`、`bilibili-api-python==17.4.2` 及其纯 Python 传递依赖 `qrcode-terminal` 使用带哈希的官方源码包：Jieba 没有可用 wheel；Bilibili API 较旧可用 wheel 的发布元数据缺少实际运行依赖，因此固定为当前已验证的 17.4.2 源码发布。PEP 517 隔离构建工具不属于运行时锁；D2 必须预构建这些 wheel、记录成品 SHA256，再放入软件私有运行时，不能让终端用户现场编译。生成工具固定为 `uv 0.10.8`，脚本同时校验 `uv.exe` 的 SHA256。
+目标固定为 Windows 11 x64、CPython 3.13.9。锁文件包含 SHA256，且忽略 2026-08-29 23:59:59（北京时间）之后上传的文件。通常只接受 PyPI 二进制分发包，只有没有可用 wheel 的 `jieba==0.42.1` 和纯 Python 传递依赖 `qrcode-terminal==0.8` 使用带哈希的官方源码包。D2 必须预构建这两个 wheel、记录成品 SHA256，再放入软件私有运行时，不能让终端用户现场编译。`bilibili-api-python==17.4.2` 使用 PyPI 官方 wheel；D2 实物复核确认其 12 项运行依赖和全部程序文件与同版本 sdist 重构结果一致。生成工具固定为 `uv 0.10.8`，脚本同时校验 `uv.exe` 的 SHA256。
 
 在一个 `include-system-site-packages = false` 的临时虚拟环境中运行：
 
@@ -38,13 +38,13 @@ powershell -ExecutionPolicy Bypass -File .\delivery\locks\verify-locks.ps1 -Base
 ```
 
 验证脚本不删除运行目录，并拒绝把运行目录或缓存放进仓库；每次运行使用新的随机子目录。
-由于 `bilibili-api-python` 的旧式构建目录很深，`WorkRoot` 和 `CacheDir` 的绝对路径都必须不超过 80 个字符，避免触发 Windows 传统路径长度限制。
+`WorkRoot` 和 `CacheDir` 的绝对路径必须不超过 80 个字符，作为旧式源码构建在 Windows 上的路径长度保护。
 
 三个外部适配器的公开源码地址、精确提交、版本和许可证记录在 `external-sources.json`。该清单故意不引用本机 `opensource_candidates/` 绝对路径；D2 从精确提交构建 wheel 后再填写 wheel 文件名与 SHA256，不复制整个本机源码目录。
 
 `bilibili-api-python==17.4.2` 的本地安装元数据声明为 `GPL-3.0-or-later`，已在 `external-sources.json` 标记为 D4 分发审查项。未完成许可证义务核对前，不得把 B站子运行时作为正式外发产物。
 
-Playwright/Patchright 的 Python 包版本、内置 `browsers.json` 哈希以及 Chromium、headless shell、FFmpeg 修订号记录在 `browser-runtimes.json`。浏览器压缩包尚未下载或打包；其下载地址和 SHA256 留到 D2 安装器原型阶段固定。
+Playwright/Patchright 的 Python 包版本、内置 `browsers.json` 哈希以及 Chromium、headless shell、FFmpeg、Winldd 修订号记录在 `browser-runtimes.json`。浏览器和 Windows 依赖检查压缩包尚未下载或打包；其下载地址和 SHA256 留到 D2 安装器原型阶段固定。
 
 Playwright、Patchright 浏览器二进制不是 Python wheel，须在后续交付构建阶段按锁定包内的浏览器修订号另行固定和校验；它们不由本目录的 Python 哈希锁覆盖。
 

@@ -64,7 +64,7 @@ if (
     throw "BasePythonPath must be win-amd64 CPython $ExpectedPythonVersion."
 }
 
-$UvCommand = Get-Command uv -CommandType Application -ErrorAction Stop
+$UvCommand = Get-Command uv -CommandType Application -ErrorAction Stop | Select-Object -First 1
 $UvPath = $UvCommand.Source
 $UvVersion = (& $UvPath --version).Trim()
 $UvSha256 = (Get-FileHash -LiteralPath $UvPath -Algorithm SHA256).Hash.ToUpperInvariant()
@@ -214,7 +214,6 @@ try {
             "--strict",
             "--only-binary", ":all:",
             "--no-binary", "jieba",
-            "--no-binary", "bilibili-api-python",
             "--no-binary", "qrcode-terminal",
             "--no-sources",
             "--link-mode", "copy",

@@ -1,0 +1,6 @@
+setuptools
+setuptools-scm
+wheel
+hatchling
+hatch-fancy-pypi-readme>=22.5.0
+scikit-build-core>=1.0,<1.1

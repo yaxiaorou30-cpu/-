@@ -10,6 +10,32 @@
     "requireHashes": true,
     "onlyBinary": true
   },
+  "wheelBuild": {
+    "python": "cpython-3.13.9-x64",
+    "uv": "0.10.8",
+    "sourceDateEpoch": 1788019199,
+    "runsPerArtifact": 2,
+    "networkDuringTargetBuild": false,
+    "selectedArtifactIds": [
+      "jieba-0.42.1",
+      "qrcode-terminal-0.8"
+    ],
+    "validationOnlyArtifactIds": [
+      "bilibili-api-python-17.4.2"
+    ],
+    "dependencyInstall": {
+      "requireHashes": true,
+      "onlyBinary": true
+    },
+    "input": {
+      "path": "build-inputs/wheel-build.in",
+      "sha256": "d81a0bb625ea04dd183867f8193568633db73d37a94fd92b0bd8cb0db8f8d694"
+    },
+    "dependencyLock": {
+      "path": "build-locks/wheel-build-win11-x64-py313.lock.txt",
+      "sha256": "ab9bb7dadd6e17eb89ed9b1a8b124da64009028fa7589c0f55e15f404c5e6598"
+    }
+  },
   "dependencyLocks": [
     {
       "id": "main",
@@ -51,29 +77,45 @@
   "wheelArtifacts": [
     {
       "id": "jieba-0.42.1",
-      "status": "pending-d2-build",
+      "status": "ready",
       "sourceType": "pypi-sdist",
+      "sourceUrl": "https://files.pythonhosted.org/packages/c6/cb/18eeb235f833b726522d7ebed54f2278ce28ba9438e3135ab0278d9792a2/jieba-0.42.1.tar.gz",
+      "sourceFileName": "jieba-0.42.1.tar.gz",
+      "sourceSize": 19214172,
       "sourceSha256": "055ca12f62674fafed09427f176506079bc135638a14e23e25be909131928db2",
-      "fileName": null,
-      "sha256": null
+      "fileName": "jieba-0.42.1-py3-none-any.whl",
+      "size": 19314527,
+      "sha256": "6db280488a8989695b450928a302fd81a6e35a46449fd58c54f2ff5ae06ce866",
+      "tag": "py3-none-any",
+      "sameHostRepeatable": true
     },
     {
       "id": "qrcode-terminal-0.8",
-      "status": "pending-d2-build",
+      "status": "ready",
       "sourceType": "pypi-sdist",
-      "sourceSha256": "1e2b69e62b29a13bb9e0a5b828aec682421ced1418b086d39a893912643f1f13",
-      "fileName": null,
-      "sha256": null
+      "sourceUrl": "https://files.pythonhosted.org/packages/96/62/2422c088b7219db9f78c912418254db9896d1b20ab15e83aae2821419a65/qrcode-terminal-0.8.tar.gz",
+      "sourceFileName": "qrcode-terminal-0.8.tar.gz",
+      "sourceSize": 1666,
+      "sourceSha256": "1e2b69e662b9346e98dd95983033e9d43cff0643d8afda12605f515428e666c0",
+      "fileName": "qrcode_terminal-0.8-py3-none-any.whl",
+      "size": 2661,
+      "sha256": "8cd9b4e146051633b39b734d692c2f1cf4d6d85e0694e093546416c63aca2714",
+      "tag": "py3-none-any",
+      "sameHostRepeatable": true
     },
     {
       "id": "bilibili-api-python-17.4.2",
-      "status": "pending-d2-build",
-      "sourceType": "pypi-sdist",
-      "sourceSha256": "3ec62eaad920876607103781741642214339e626d84a22dab168882761e2d4b5",
+      "status": "ready",
+      "sourceType": "pypi-wheel",
+      "url": "https://files.pythonhosted.org/packages/8e/41/c12f4c52cecd6ca6c4bee49a8949ed3df3561e5dd12b891aba96dcdc4502/bilibili_api_python-17.4.2-py3-none-any.whl",
       "license": "GPL-3.0-or-later",
       "distributionGate": "pending-d4-license-review",
-      "fileName": null,
-      "sha256": null
+      "fileName": "bilibili_api_python-17.4.2-py3-none-any.whl",
+      "size": 387324,
+      "sha256": "91e002b2e0bcd3eb50239e35ceb849133b574f407a92a06636e1de1031b6d09d",
+      "tag": "py3-none-any",
+      "upstreamPublished": true,
+      "recordValidated": true
     },
     {
       "id": "bilibili-cli-0.6.2",
@@ -104,56 +146,82 @@
   "browserArtifacts": [
     {
       "id": "chromium-1228-win64",
-      "status": "pending-d2-download-lock",
+      "status": "pending-d2-download-hash",
       "consumer": "playwright-1.61.0",
+      "revision": "1228",
       "browserVersion": "149.0.7827.55",
-      "url": null,
-      "fileName": null,
+      "url": "https://cdn.playwright.dev/builds/cft/149.0.7827.55/win64/chrome-win64.zip",
+      "upstreamFileName": "chrome-win64.zip",
+      "fileName": "playwright-chromium-1228-win64.zip",
       "sha256": null
     },
     {
       "id": "chromium-headless-shell-1228-win64",
-      "status": "pending-d2-download-lock",
+      "status": "pending-d2-download-hash",
       "consumer": "playwright-1.61.0",
+      "revision": "1228",
       "browserVersion": "149.0.7827.55",
-      "url": null,
-      "fileName": null,
+      "url": "https://cdn.playwright.dev/builds/cft/149.0.7827.55/win64/chrome-headless-shell-win64.zip",
+      "upstreamFileName": "chrome-headless-shell-win64.zip",
+      "fileName": "playwright-chromium-headless-shell-1228-win64.zip",
       "sha256": null
     },
     {
       "id": "chromium-1234-win64",
-      "status": "pending-d2-download-lock",
+      "status": "pending-d2-download-hash",
       "consumers": [
         "playwright-1.62.0",
         "patchright-1.62.2"
       ],
+      "revision": "1234",
       "browserVersion": "151.0.7922.34",
-      "url": null,
-      "fileName": null,
+      "url": "https://cdn.playwright.dev/builds/cft/151.0.7922.34/win64/chrome-win64.zip",
+      "upstreamFileName": "chrome-win64.zip",
+      "fileName": "playwright-chromium-1234-win64.zip",
       "sha256": null
     },
     {
       "id": "chromium-headless-shell-1234-win64",
-      "status": "pending-d2-download-lock",
+      "status": "pending-d2-download-hash",
       "consumers": [
         "playwright-1.62.0",
         "patchright-1.62.2"
       ],
+      "revision": "1234",
       "browserVersion": "151.0.7922.34",
-      "url": null,
-      "fileName": null,
+      "url": "https://cdn.playwright.dev/builds/cft/151.0.7922.34/win64/chrome-headless-shell-win64.zip",
+      "upstreamFileName": "chrome-headless-shell-win64.zip",
+      "fileName": "playwright-chromium-headless-shell-1234-win64.zip",
       "sha256": null
     },
     {
       "id": "ffmpeg-1011-win64",
-      "status": "pending-d2-download-lock",
+      "status": "pending-d2-download-hash",
       "consumers": [
         "playwright-1.61.0",
         "playwright-1.62.0",
         "patchright-1.62.2"
       ],
-      "url": null,
-      "fileName": null,
+      "revision": "1011",
+      "browserVersion": null,
+      "url": "https://cdn.playwright.dev/dbazure/download/playwright/builds/ffmpeg/1011/ffmpeg-win64.zip",
+      "upstreamFileName": "ffmpeg-win64.zip",
+      "fileName": "playwright-ffmpeg-1011-win64.zip",
+      "sha256": null
+    },
+    {
+      "id": "winldd-1007-win64",
+      "status": "pending-d2-download-hash",
+      "consumers": [
+        "playwright-1.61.0",
+        "playwright-1.62.0",
+        "patchright-1.62.2"
+      ],
+      "revision": "1007",
+      "browserVersion": null,
+      "url": "https://cdn.playwright.dev/dbazure/download/playwright/builds/winldd/1007/winldd-win64.zip",
+      "upstreamFileName": "winldd-win64.zip",
+      "fileName": "playwright-winldd-1007-win64.zip",
       "sha256": null
     }
   ],

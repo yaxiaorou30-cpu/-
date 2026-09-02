@@ -51,7 +51,7 @@ if (
     throw "An isolated win-amd64 CPython $ExpectedPythonVersion interpreter is required."
 }
 
-$UvCommand = Get-Command uv -CommandType Application -ErrorAction Stop
+$UvCommand = Get-Command uv -CommandType Application -ErrorAction Stop | Select-Object -First 1
 $UvPath = $UvCommand.Source
 $UvVersion = (& $UvPath --version).Trim()
 if ($LASTEXITCODE -ne 0 -or $UvVersion -ne $ExpectedUvVersion) {
@@ -121,7 +121,6 @@ $CommonArguments = @(
     "--generate-hashes",
     "--only-binary", ":all:",
     "--no-binary", "jieba",
-    "--no-binary", "bilibili-api-python",
     "--no-binary", "qrcode-terminal",
     "--no-sources",
     "--refresh",
