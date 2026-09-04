@@ -56,9 +56,17 @@
       "source_tree_tracked_clean": true,
       "runtime_lock": "generated/aiotieba-runtime-win11-x64-py313.lock.txt",
       "wheel": {
-        "status": "pending_d2_build",
-        "filename": null,
-        "sha256": null
+        "status": "ready",
+        "source_tree": "0074b12c931b790d981f4403d3cee2f421d66472",
+        "build_run_url": "https://github.com/yaxiaorou30-cpu/-/actions/runs/33826036726",
+        "artifact_archive_sha256": "3be9af885db3ab8c32c1d8ca5c7480c41a3d8a9c7bb0757dabd6d86eb2a18d1c",
+        "filename": "aiotieba-4.7.2a8-cp313-cp313-win_amd64.whl",
+        "size": 292310,
+        "sha256": "4d665c3b54116034505bd0baccbf149d90d89ea31242bc397d3d10bc7ae4ba42",
+        "tag": "cp313-cp313-win_amd64",
+        "record_validated": true,
+        "native_extension_validated": true,
+        "isolated_import_validated": true
       }
     }
   ]

@@ -135,12 +135,20 @@
     },
     {
       "id": "aiotieba-4.7.2a8",
-      "status": "pending-d2-build",
+      "status": "ready",
       "sourceType": "git-commit",
       "sourceCommit": "bae68256fd250d5178e1447899ffa155c77eda38",
+      "sourceTree": "0074b12c931b790d981f4403d3cee2f421d66472",
       "requiresBuildToolchain": true,
-      "fileName": null,
-      "sha256": null
+      "buildRunUrl": "https://github.com/yaxiaorou30-cpu/-/actions/runs/33826036726",
+      "artifactArchiveSha256": "3be9af885db3ab8c32c1d8ca5c7480c41a3d8a9c7bb0757dabd6d86eb2a18d1c",
+      "fileName": "aiotieba-4.7.2a8-cp313-cp313-win_amd64.whl",
+      "size": 292310,
+      "sha256": "4d665c3b54116034505bd0baccbf149d90d89ea31242bc397d3d10bc7ae4ba42",
+      "tag": "cp313-cp313-win_amd64",
+      "recordValidated": true,
+      "nativeExtensionValidated": true,
+      "isolatedImportValidated": true
     }
   ],
   "browserArtifacts": [

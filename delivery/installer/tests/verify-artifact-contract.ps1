@@ -216,6 +216,7 @@ $ExpectedReadyWheels = @{
         fileName = "jieba-0.42.1-py3-none-any.whl"
         size = 19314527
         sha256 = "6db280488a8989695b450928a302fd81a6e35a46449fd58c54f2ff5ae06ce866"
+        tag = "py3-none-any"
     }
     "qrcode-terminal-0.8" = @{
         sourceType = "pypi-sdist"
@@ -226,6 +227,7 @@ $ExpectedReadyWheels = @{
         fileName = "qrcode_terminal-0.8-py3-none-any.whl"
         size = 2661
         sha256 = "8cd9b4e146051633b39b734d692c2f1cf4d6d85e0694e093546416c63aca2714"
+        tag = "py3-none-any"
     }
     "bilibili-api-python-17.4.2" = @{
         sourceType = "pypi-wheel"
@@ -233,6 +235,18 @@ $ExpectedReadyWheels = @{
         fileName = "bilibili_api_python-17.4.2-py3-none-any.whl"
         size = 387324
         sha256 = "91e002b2e0bcd3eb50239e35ceb849133b574f407a92a06636e1de1031b6d09d"
+        tag = "py3-none-any"
+    }
+    "aiotieba-4.7.2a8" = @{
+        sourceType = "git-commit"
+        sourceCommit = "bae68256fd250d5178e1447899ffa155c77eda38"
+        sourceTree = "0074b12c931b790d981f4403d3cee2f421d66472"
+        buildRunUrl = "https://github.com/yaxiaorou30-cpu/-/actions/runs/33826036726"
+        artifactArchiveSha256 = "3be9af885db3ab8c32c1d8ca5c7480c41a3d8a9c7bb0757dabd6d86eb2a18d1c"
+        fileName = "aiotieba-4.7.2a8-cp313-cp313-win_amd64.whl"
+        size = 292310
+        sha256 = "4d665c3b54116034505bd0baccbf149d90d89ea31242bc397d3d10bc7ae4ba42"
+        tag = "cp313-cp313-win_amd64"
     }
 }
 $ExpectedPendingWheels = @{
@@ -245,12 +259,6 @@ $ExpectedPendingWheels = @{
         status = "pending-d2-build"
         sourceType = "git-commit"
         sourceCommit = "b53a81fc01ff54601faaeae68d6b4a6d2f18efcb"
-    }
-    "aiotieba-4.7.2a8" = @{
-        status = "pending-d2-build"
-        sourceType = "git-commit"
-        sourceCommit = "bae68256fd250d5178e1447899ffa155c77eda38"
-        requiresBuildToolchain = $true
     }
 }
 Assert-Equal @($Manifest.wheelArtifacts).Count $ExpectedWheelIds.Count "wheelArtifacts.Count"
@@ -283,7 +291,7 @@ foreach ($Wheel in @($Manifest.wheelArtifacts)) {
         Assert-Equal $Wheel.fileName $ExpectedWheel.fileName "wheelArtifacts.$($Wheel.id).fileName"
         Assert-Equal $Wheel.size $ExpectedWheel.size "wheelArtifacts.$($Wheel.id).size"
         Assert-Equal $Wheel.sha256 $ExpectedWheel.sha256 "wheelArtifacts.$($Wheel.id).sha256"
-        Assert-Equal $Wheel.tag "py3-none-any" "wheelArtifacts.$($Wheel.id).tag"
+        Assert-Equal $Wheel.tag $ExpectedWheel.tag "wheelArtifacts.$($Wheel.id).tag"
         if ($ExpectedWheel.sourceType -eq "pypi-sdist") {
             Assert-Equal $Wheel.sourceFileName $ExpectedWheel.sourceFileName "wheelArtifacts.$($Wheel.id).sourceFileName"
             Assert-Equal $Wheel.sourceSize $ExpectedWheel.sourceSize "wheelArtifacts.$($Wheel.id).sourceSize"
@@ -291,10 +299,20 @@ foreach ($Wheel in @($Manifest.wheelArtifacts)) {
             Assert-Equal $Wheel.sourceUrl $ExpectedWheel.sourceUrl "wheelArtifacts.$($Wheel.id).sourceUrl"
             Assert-Equal $Wheel.sameHostRepeatable $true "wheelArtifacts.$($Wheel.id).sameHostRepeatable"
         }
-        else {
+        elseif ($ExpectedWheel.sourceType -eq "pypi-wheel") {
             Assert-Equal $Wheel.url $ExpectedWheel.url "wheelArtifacts.$($Wheel.id).url"
             Assert-Equal $Wheel.upstreamPublished $true "wheelArtifacts.$($Wheel.id).upstreamPublished"
             Assert-Equal $Wheel.recordValidated $true "wheelArtifacts.$($Wheel.id).recordValidated"
+        }
+        elseif ($ExpectedWheel.sourceType -eq "git-commit") {
+            Assert-Equal $Wheel.sourceCommit $ExpectedWheel.sourceCommit "wheelArtifacts.$($Wheel.id).sourceCommit"
+            Assert-Equal $Wheel.sourceTree $ExpectedWheel.sourceTree "wheelArtifacts.$($Wheel.id).sourceTree"
+            Assert-Equal $Wheel.buildRunUrl $ExpectedWheel.buildRunUrl "wheelArtifacts.$($Wheel.id).buildRunUrl"
+            Assert-Equal $Wheel.artifactArchiveSha256 $ExpectedWheel.artifactArchiveSha256 "wheelArtifacts.$($Wheel.id).artifactArchiveSha256"
+            Assert-Equal $Wheel.requiresBuildToolchain $true "wheelArtifacts.$($Wheel.id).requiresBuildToolchain"
+            Assert-Equal $Wheel.recordValidated $true "wheelArtifacts.$($Wheel.id).recordValidated"
+            Assert-Equal $Wheel.nativeExtensionValidated $true "wheelArtifacts.$($Wheel.id).nativeExtensionValidated"
+            Assert-Equal $Wheel.isolatedImportValidated $true "wheelArtifacts.$($Wheel.id).isolatedImportValidated"
         }
     }
     elseif ($ExpectedPendingWheels.ContainsKey([string]$Wheel.id)) {
