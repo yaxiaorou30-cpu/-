@@ -140,7 +140,7 @@
 
 **2026-09-02 检查点：** 已用两个独立临时构建环境、锁定且仅二进制的构建依赖、固定时间戳和离线目标构建，双次生成并锁定 Jieba 与 qrcode-terminal wheel。Bilibili API 的 sdist 双构建只作为对比证据；实物复核证明 PyPI 官方 wheel 的程序文件与 12 项运行依赖完整，因此正式路径改用官方 wheel并重验六套隔离锁。Bilibili API 的技术制品就绪不代表许可放行，D4 审查前继续禁止外发。浏览器清单补入 Playwright 在 Windows 正常依赖校验需要的 Winldd 1007；6 个浏览器/依赖检查归档均已完成两次独立下载、SHA256 固定和 ZIP 安全审计，剩余 3 个外部适配器 wheel 尚未锁定。
 
-**2026-09-04 检查点：** 已从 aiotieba 固定提交 `bae68256fd250d5178e1447899ffa155c77eda38` 在 GitHub Actions 构建 CPython 3.13 Windows x64 wheel，并锁定文件名、大小、源码树、wheel SHA256 与 GitHub 制品 ZIP SHA256。wheel 的路径安全、`RECORD` 353/353、AMD64 原生扩展、GitHub 构建环境导入和本机全新隔离环境导入均通过；D2 待预构建的外部适配器 wheel 从 3 个降为 2 个。该结果仍只是内部制品证据，不是候选安装包或发布授权。
+**2026-09-04 检查点：** 已从 aiotieba 固定提交 `bae68256fd250d5178e1447899ffa155c77eda38` 在 GitHub Actions 构建 CPython 3.13 Windows x64 wheel，并锁定文件名、大小、源码树、wheel SHA256 与 GitHub 制品 ZIP SHA256。wheel 的路径安全、`RECORD` 353/353、AMD64 原生扩展、GitHub 构建环境导入和本机全新隔离环境导入均通过。随后从 newspaper4k 固定提交 `b53a81fc01ff54601faaeae68d6b4a6d2f18efcb` 完成两次独立构建，第二次完全离线，两份 `py3-none-any` wheel 字节一致；路径安全、`RECORD` 133/133、23 包依赖检查与隔离导入通过。D2 待预构建的外部适配器 wheel 从 3 个降为 1 个。aiotieba 与 newspaper4k 的结果仍只是内部制品证据；newspaper4k 内嵌 Apache-2.0 资源的许可证文本义务留待 D4 审查，不构成候选安装包或发布授权。
 
 ## D3：编写普通用户教程
 
