@@ -40,9 +40,18 @@
       "source_tree_tracked_clean": true,
       "runtime_lock": "generated/newspaper4k-runtime-win11-x64-py313.lock.txt",
       "wheel": {
-        "status": "pending_d2_build",
-        "filename": null,
-        "sha256": null
+        "status": "ready",
+        "source_tree": "6916249fa3b45eb44a5c3e7945b6607e99500225",
+        "source_archive_size": 9372257,
+        "source_archive_sha256": "cb2bcde50e3eee0feb62a77b29a743696dc35fd1815c7d9d12621b752948901c",
+        "distribution_gate": "pending_d4_bundled_apache_license_review",
+        "filename": "newspaper4k-0.9.6-py3-none-any.whl",
+        "size": 319011,
+        "sha256": "c82b9fc9d3686d776dc016bfad0ee0671ddcce13b5e7ed83c69eb1e740747168",
+        "tag": "py3-none-any",
+        "same_host_repeatable": true,
+        "record_validated": true,
+        "isolated_import_validated": true
       }
     },
     {

@@ -143,7 +143,7 @@ try {
     Assert-FailedWith $ForgedBrowserHashResult "sha256 must be" "Forged ready browser SHA256 check"
 
     $UnexpectedPendingManifest = Get-Content -Raw -Encoding UTF8 -LiteralPath $SourceManifest | ConvertFrom-Json
-    $PendingWheel = @($UnexpectedPendingManifest.wheelArtifacts | Where-Object { $_.id -eq "newspaper4k-0.9.6" })[0]
+    $PendingWheel = @($UnexpectedPendingManifest.wheelArtifacts | Where-Object { $_.id -eq "bilibili-cli-0.6.2" })[0]
     $PendingWheel.status = "pending-unreviewed-state"
     $UnexpectedPendingFixture = New-FixturePath
     Write-Fixture $UnexpectedPendingManifest $UnexpectedPendingFixture

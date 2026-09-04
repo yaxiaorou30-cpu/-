@@ -247,6 +247,21 @@ $ExpectedReadyWheels = @{
         size = 292310
         sha256 = "4d665c3b54116034505bd0baccbf149d90d89ea31242bc397d3d10bc7ae4ba42"
         tag = "cp313-cp313-win_amd64"
+        requiresBuildToolchain = $true
+        nativeExtensionValidated = $true
+    }
+    "newspaper4k-0.9.6" = @{
+        sourceType = "git-commit"
+        sourceCommit = "b53a81fc01ff54601faaeae68d6b4a6d2f18efcb"
+        sourceTree = "6916249fa3b45eb44a5c3e7945b6607e99500225"
+        sourceArchiveSize = 9372257
+        sourceArchiveSha256 = "cb2bcde50e3eee0feb62a77b29a743696dc35fd1815c7d9d12621b752948901c"
+        distributionGate = "pending-d4-bundled-apache-license-review"
+        fileName = "newspaper4k-0.9.6-py3-none-any.whl"
+        size = 319011
+        sha256 = "c82b9fc9d3686d776dc016bfad0ee0671ddcce13b5e7ed83c69eb1e740747168"
+        tag = "py3-none-any"
+        sameHostRepeatable = $true
     }
 }
 $ExpectedPendingWheels = @{
@@ -254,11 +269,6 @@ $ExpectedPendingWheels = @{
         status = "pending-d2-build"
         sourceType = "git-commit"
         sourceCommit = "dbe28551930df43b633baa52e9639832aeada967"
-    }
-    "newspaper4k-0.9.6" = @{
-        status = "pending-d2-build"
-        sourceType = "git-commit"
-        sourceCommit = "b53a81fc01ff54601faaeae68d6b4a6d2f18efcb"
     }
 }
 Assert-Equal @($Manifest.wheelArtifacts).Count $ExpectedWheelIds.Count "wheelArtifacts.Count"
@@ -307,12 +317,22 @@ foreach ($Wheel in @($Manifest.wheelArtifacts)) {
         elseif ($ExpectedWheel.sourceType -eq "git-commit") {
             Assert-Equal $Wheel.sourceCommit $ExpectedWheel.sourceCommit "wheelArtifacts.$($Wheel.id).sourceCommit"
             Assert-Equal $Wheel.sourceTree $ExpectedWheel.sourceTree "wheelArtifacts.$($Wheel.id).sourceTree"
-            Assert-Equal $Wheel.buildRunUrl $ExpectedWheel.buildRunUrl "wheelArtifacts.$($Wheel.id).buildRunUrl"
-            Assert-Equal $Wheel.artifactArchiveSha256 $ExpectedWheel.artifactArchiveSha256 "wheelArtifacts.$($Wheel.id).artifactArchiveSha256"
-            Assert-Equal $Wheel.requiresBuildToolchain $true "wheelArtifacts.$($Wheel.id).requiresBuildToolchain"
             Assert-Equal $Wheel.recordValidated $true "wheelArtifacts.$($Wheel.id).recordValidated"
-            Assert-Equal $Wheel.nativeExtensionValidated $true "wheelArtifacts.$($Wheel.id).nativeExtensionValidated"
             Assert-Equal $Wheel.isolatedImportValidated $true "wheelArtifacts.$($Wheel.id).isolatedImportValidated"
+            foreach ($OptionalField in @(
+                "sourceArchiveSize",
+                "sourceArchiveSha256",
+                "distributionGate",
+                "buildRunUrl",
+                "artifactArchiveSha256",
+                "requiresBuildToolchain",
+                "sameHostRepeatable",
+                "nativeExtensionValidated"
+            )) {
+                if ($ExpectedWheel.ContainsKey($OptionalField)) {
+                    Assert-Equal $Wheel.$OptionalField $ExpectedWheel[$OptionalField] "wheelArtifacts.$($Wheel.id).$OptionalField"
+                }
+            }
         }
     }
     elseif ($ExpectedPendingWheels.ContainsKey([string]$Wheel.id)) {

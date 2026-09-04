@@ -127,11 +127,20 @@
     },
     {
       "id": "newspaper4k-0.9.6",
-      "status": "pending-d2-build",
+      "status": "ready",
       "sourceType": "git-commit",
       "sourceCommit": "b53a81fc01ff54601faaeae68d6b4a6d2f18efcb",
-      "fileName": null,
-      "sha256": null
+      "sourceTree": "6916249fa3b45eb44a5c3e7945b6607e99500225",
+      "sourceArchiveSize": 9372257,
+      "sourceArchiveSha256": "cb2bcde50e3eee0feb62a77b29a743696dc35fd1815c7d9d12621b752948901c",
+      "distributionGate": "pending-d4-bundled-apache-license-review",
+      "fileName": "newspaper4k-0.9.6-py3-none-any.whl",
+      "size": 319011,
+      "sha256": "c82b9fc9d3686d776dc016bfad0ee0671ddcce13b5e7ed83c69eb1e740747168",
+      "tag": "py3-none-any",
+      "sameHostRepeatable": true,
+      "recordValidated": true,
+      "isolatedImportValidated": true
     },
     {
       "id": "aiotieba-4.7.2a8",
