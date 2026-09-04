@@ -1,0 +1,116 @@
+name: Build aiotieba Windows wheel
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-wheel:
+    name: CPython 3.13.9 / Windows x64
+    runs-on: windows-2025
+    timeout-minutes: 30
+    env:
+      AIOTIEBA_COMMIT: bae68256fd250d5178e1447899ffa155c77eda38
+      AIOTIEBA_VERSION: 4.7.2a8
+      PYTHON_VERSION: 3.13.9
+      SOURCE_DATE_EPOCH: "1788019199"
+
+    steps:
+      - name: Check out delivery locks
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check out pinned aiotieba source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: lumina37/aiotieba
+          ref: bae68256fd250d5178e1447899ffa155c77eda38
+          path: aiotieba-source
+          persist-credentials: false
+
+      - name: Set up CPython 3.13.9 x64
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13.9"
+          architecture: x64
+
+      - name: Verify inputs and install locked build dependencies
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $PSNativeCommandUseErrorActionPreference = $true
+
+          $actualCommit = (git -C aiotieba-source rev-parse HEAD).Trim()
+          if ($actualCommit -ne $env:AIOTIEBA_COMMIT) {
+            throw "Unexpected aiotieba commit: $actualCommit"
+          }
+
+          python -c "import platform, struct, sys; assert platform.python_implementation() == 'CPython'; assert sys.version_info[:3] == (3, 13, 9); assert struct.calcsize('P') == 8; print(sys.version)"
+          cmake --version
+          python -m pip install --disable-pip-version-check --require-hashes --only-binary=:all: -r delivery/installer/build-locks/wheel-build-win11-x64-py313.lock.txt
+
+      - name: Build the pinned wheel
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $PSNativeCommandUseErrorActionPreference = $true
+
+          New-Item -ItemType Directory -Path wheelhouse -Force | Out-Null
+          python -m pip wheel --disable-pip-version-check --no-deps --no-build-isolation --wheel-dir wheelhouse aiotieba-source
+
+      - name: Verify wheel and create evidence
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $PSNativeCommandUseErrorActionPreference = $true
+
+          $wheels = @(Get-ChildItem -LiteralPath wheelhouse -Filter "*.whl" -File)
+          if ($wheels.Count -ne 1) {
+            throw "Expected exactly one wheel, found $($wheels.Count)"
+          }
+
+          $wheel = $wheels[0]
+          $expectedName = "aiotieba-$($env:AIOTIEBA_VERSION)-cp313-cp313-win_amd64.whl"
+          if ($wheel.Name -ne $expectedName) {
+            throw "Unexpected wheel name: $($wheel.Name)"
+          }
+
+          python -c "import sys, zipfile; names=zipfile.ZipFile(sys.argv[1]).namelist(); assert any(n.startswith('aiotieba/helper/crypto/crypto.') and n.endswith('.pyd') for n in names), 'native crypto extension is missing'" $wheel.FullName
+
+          $smokeRoot = Join-Path $env:RUNNER_TEMP "aiotieba-smoke"
+          python -m venv $smokeRoot
+          $smokePython = Join-Path $smokeRoot "Scripts/python.exe"
+          & $smokePython -m pip install --disable-pip-version-check --require-hashes --only-binary=:all: -r delivery/locks/generated/aiotieba-runtime-win11-x64-py313.lock.txt
+          & $smokePython -m pip install --disable-pip-version-check --no-deps $wheel.FullName
+          & $smokePython -m pip check
+          & $smokePython -c "import importlib.metadata as m; import aiotieba; from aiotieba.helper.crypto.crypto import c3_aid; assert m.version('aiotieba') == '4.7.2a8'; assert callable(c3_aid); print('aiotieba native import passed')"
+
+          $sha256 = (Get-FileHash -LiteralPath $wheel.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$sha256  $($wheel.Name)" | Set-Content -LiteralPath wheelhouse/SHA256SUMS.txt -Encoding ascii
+
+          $sourceTree = (git -C aiotieba-source rev-parse 'HEAD^{tree}').Trim()
+          $pythonDescription = (python -c "import sys; print(sys.version.replace(chr(10), ' '))").Trim()
+          $cmakeDescription = (cmake --version | Select-Object -First 1).Trim()
+          @(
+            "source_repository=https://github.com/lumina37/aiotieba"
+            "source_commit=$($env:AIOTIEBA_COMMIT)"
+            "source_tree=$sourceTree"
+            "package_version=$($env:AIOTIEBA_VERSION)"
+            "python=$pythonDescription"
+            "cmake=$cmakeDescription"
+            "runner_image=$($env:ImageOS)"
+            "runner_image_version=$($env:ImageVersion)"
+            "wheel=$($wheel.Name)"
+            "wheel_sha256=$sha256"
+          ) | Set-Content -LiteralPath wheelhouse/BUILD-INFO.txt -Encoding utf8
+
+      - name: Upload verified wheel
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: aiotieba-4.7.2a8-cp313-win_amd64
+          path: wheelhouse/*
+          if-no-files-found: error
+          retention-days: 30
