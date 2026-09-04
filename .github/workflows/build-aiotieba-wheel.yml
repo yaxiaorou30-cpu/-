@@ -59,7 +59,7 @@ jobs:
           $PSNativeCommandUseErrorActionPreference = $true
 
           New-Item -ItemType Directory -Path wheelhouse -Force | Out-Null
-          python -m pip wheel --disable-pip-version-check --no-deps --no-build-isolation --wheel-dir wheelhouse aiotieba-source
+          python -m pip wheel --disable-pip-version-check --no-deps --no-build-isolation --wheel-dir wheelhouse .\aiotieba-source
 
       - name: Verify wheel and create evidence
         shell: pwsh
