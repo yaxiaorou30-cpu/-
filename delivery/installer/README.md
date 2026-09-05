@@ -1,6 +1,6 @@
 # D2 Windows 在线安装器原型
 
-本目录已建立安装器合同，并锁定了构建工具、首批 5 个 wheel（3 个本地预构建、1 个 PyPI 官方 wheel、1 个 GitHub Actions 构建的 Windows 原生 wheel）与 6 个浏览器/工具归档；它仍不是安装包，也不会修改本机 Python、PATH、注册表或 API Key。合同的作用是先把后续实现不得突破的边界变成可执行检查。
+本目录已建立安装器合同，并锁定了构建工具、6 个 wheel（4 个本地预构建、1 个 PyPI 官方 wheel、1 个 GitHub Actions 构建的 Windows 原生 wheel）与 6 个浏览器/工具归档；它仍不是安装包，也不会修改本机 Python、PATH、注册表或 API Key。合同的作用是先把后续实现不得突破的边界变成可执行检查。
 
 ## 已固定的边界
 
@@ -32,9 +32,9 @@ INSTALLER_CONTRACT=PASS
 powershell -NoProfile -ExecutionPolicy Bypass -File .\delivery\installer\tests\verify-artifact-contract.ps1 -Mode PlanOnly
 ```
 
-当前预期为 `PENDING_ARTIFACTS=1`、`UNAPPROVED_DISTRIBUTION_GATES=2`、`NETWORK_ACTIONS=0`、`FILESYSTEM_MUTATIONS=0`。工具归档、3 个本地预构建 wheel、1 个 PyPI 官方 wheel、aiotieba Windows 原生 wheel 和 6 个浏览器/依赖检查压缩包已锁定；剩余 1 项为待预构建的 Bilibili CLI wheel。Bilibili API 与 newspaper4k 虽已完成技术校验，各自的 GPL 运行依赖和内嵌 Apache-2.0 资源仍须完成 D4 许可审查，审查前不得进入正式外发包。详细证据见 `WHEEL_VERIFICATION.md` 和 `BROWSER_VERIFICATION.md`。
+当前预期为 `PENDING_ARTIFACTS=0`、`UNAPPROVED_DISTRIBUTION_GATES=2`、`NETWORK_ACTIONS=0`、`FILESYSTEM_MUTATIONS=0`。工具归档、4 个本地预构建 wheel、1 个 PyPI 官方 wheel、aiotieba Windows 原生 wheel 和 6 个浏览器/依赖检查压缩包均已锁定；三个外部适配器 wheel 已全部完成技术构建。Bilibili CLI 仍继承 Bilibili API 的 GPL 运行依赖门禁，newspaper4k 仍有内嵌 Apache-2.0 资源门禁，二者均须完成 D4 许可审查后才能进入正式外发包。详细证据见 `WHEEL_VERIFICATION.md` 和 `BROWSER_VERIFICATION.md`。
 
-运行负向用例，确认受保护路径、未批准的 `ready` 状态和许可门禁都不能被绕过：
+运行负向用例，确认受保护路径、被篡改的 `ready` 制品和许可门禁都不能被绕过：
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\delivery\installer\tests\verify-artifact-contract-negative-tests.ps1
@@ -48,7 +48,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\delivery\installer\tests\v
 powershell -NoProfile -ExecutionPolicy Bypass -File .\delivery\installer\tests\verify-artifact-contract.ps1 -Mode ReleaseReady
 ```
 
-只有所有制品都具备不可变来源、文件名和 SHA256 后，`ReleaseReady` 才允许通过。
+只有所有制品都具备不可变来源、文件名和 SHA256，且 D4 的许可证门禁全部获得批准后，`ReleaseReady` 才允许通过。
 
 ## 官方依据
 
@@ -61,7 +61,6 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\delivery\installer\tests\v
 
 ## 尚未完成
 
-- 预构建剩余 1 个外部适配器 wheel。
 - 实际准备私有运行时、加载器和 Inno Setup 定义。
 - 验证安装、重复启动、定向停止、修复、覆盖升级、数据保留和卸载。
 - 完成白名单、敏感扫描、许可证审查、干净 Win11 验收和用户批准门禁。

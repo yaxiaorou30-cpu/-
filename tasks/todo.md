@@ -18,11 +18,11 @@
 - [x] D1：在可丢弃目录建立隔离环境、锁定依赖并重跑 370 项测试
 - [x] 检查点：确认 `pip check`、依赖锁、测试结果和无真实付费接口调用
 - [ ] D2（进行中）：制作不修改业务代码的 Win11 私有 Python 在线安装器原型
-  - [x] 锁定 CPython、uv、Inno Setup，并锁定 2 个本地预构建 wheel 与 1 个 PyPI 官方 wheel
+  - [x] 锁定 CPython、uv、Inno Setup，并锁定 4 个本地预构建 wheel 与 1 个 PyPI 官方 wheel
   - [x] 锁定 6 个浏览器/依赖检查压缩包并完成重复下载与 ZIP 安全审计
   - [x] 从固定提交构建并验证 aiotieba CPython 3.13 Windows x64 原生 wheel
   - [x] 从固定提交双次构建并验证 newspaper4k 纯 Python wheel
-  - [ ] 预构建剩余 1 个外部适配器 wheel
+  - [x] 从固定提交双次构建并验证 bilibili-cli 纯 Python wheel（正式外发仍受既有 GPL 传递依赖门禁约束）
 - [ ] D3：编写六份普通用户安装、API、操作、备份和排障教程
 - [ ] D4：建立交付白名单、dry-run 清单和不显示秘密值的敏感扫描
 - [ ] 检查点：用户审阅并批准白名单后，才允许生成内部候选

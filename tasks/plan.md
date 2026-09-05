@@ -142,6 +142,8 @@
 
 **2026-09-04 检查点：** 已从 aiotieba 固定提交 `bae68256fd250d5178e1447899ffa155c77eda38` 在 GitHub Actions 构建 CPython 3.13 Windows x64 wheel，并锁定文件名、大小、源码树、wheel SHA256 与 GitHub 制品 ZIP SHA256。wheel 的路径安全、`RECORD` 353/353、AMD64 原生扩展、GitHub 构建环境导入和本机全新隔离环境导入均通过。随后从 newspaper4k 固定提交 `b53a81fc01ff54601faaeae68d6b4a6d2f18efcb` 完成两次独立构建，第二次完全离线，两份 `py3-none-any` wheel 字节一致；路径安全、`RECORD` 133/133、23 包依赖检查与隔离导入通过。D2 待预构建的外部适配器 wheel 从 3 个降为 1 个。aiotieba 与 newspaper4k 的结果仍只是内部制品证据；newspaper4k 内嵌 Apache-2.0 资源的许可证文本义务留待 D4 审查，不构成候选安装包或发布授权。
 
+**2026-09-05 检查点：** 已从 bilibili-cli 固定提交 `dbe28551930df43b633baa52e9639832aeada967` 和源码树 `4fa5eba3f90bf79f15cb6676a1aae39abb2da578` 完成两次独立构建，第二次完全离线，两份 `py3-none-any` wheel 字节一致；路径安全、`RECORD` 21/21、36 包依赖检查、隔离导入以及 UTF-8 环境下的 `--version`/`--help` 冒烟均通过，未调用联网业务命令。至此三个外部适配器 wheel 的技术构建全部完成，制品计划为 `PENDING_ARTIFACTS=0`。Bilibili CLI 仍继承 bilibili-api-python 的 GPL 分发审查，newspaper4k 的内嵌 Apache-2.0 资源也仍待审查，因此 `UNAPPROVED_DISTRIBUTION_GATES=2`，D2 整体尚未完成，也不构成候选安装包或发布授权。
+
 ## D3：编写普通用户教程
 
 **验收标准：**
@@ -245,5 +247,5 @@
 ## 当前检查点
 
 - 用户已批准计划，并接受“API 环境变量会被固定、经审计的本机 Python 子运行时继承”这一边界。
-- 用户已确认 D1，D2 在线安装器原型可以继续；当前不生成正式候选、不合并、不上传 GitHub或发布。
+- 用户已确认 D1，D2 在线安装器原型可以继续；当前不生成正式候选、不合并、不创建标签或发布。仅 aiotieba 构建工作流的两次提交曾按用户明确授权推送到 GitHub，之后的制品证据仍保留在本地分支。
 - 标签并非永久禁止：待 D6 验收通过并进入 D7 后，再由用户针对明确版本、提交和候选哈希批准创建。
