@@ -237,6 +237,19 @@ $ExpectedReadyWheels = @{
         sha256 = "91e002b2e0bcd3eb50239e35ceb849133b574f407a92a06636e1de1031b6d09d"
         tag = "py3-none-any"
     }
+    "bilibili-cli-0.6.2" = @{
+        sourceType = "git-commit"
+        sourceCommit = "dbe28551930df43b633baa52e9639832aeada967"
+        sourceTree = "4fa5eba3f90bf79f15cb6676a1aae39abb2da578"
+        sourceArchiveSize = 201153
+        sourceArchiveSha256 = "e096d3d2f38a87838cf51c515e9eed0bdca472fc3ab0defd7e12a7cd05b5b175"
+        fileName = "bilibili_cli-0.6.2-py3-none-any.whl"
+        size = 47713
+        sha256 = "5d4931790104f4f39422e7a5fcb64af6d13c2fad92f0011e5b4d8b1a2359c729"
+        tag = "py3-none-any"
+        sameHostRepeatable = $true
+        offlineCliValidated = $true
+    }
     "aiotieba-4.7.2a8" = @{
         sourceType = "git-commit"
         sourceCommit = "bae68256fd250d5178e1447899ffa155c77eda38"
@@ -264,13 +277,7 @@ $ExpectedReadyWheels = @{
         sameHostRepeatable = $true
     }
 }
-$ExpectedPendingWheels = @{
-    "bilibili-cli-0.6.2" = @{
-        status = "pending-d2-build"
-        sourceType = "git-commit"
-        sourceCommit = "dbe28551930df43b633baa52e9639832aeada967"
-    }
-}
+$ExpectedPendingWheels = @{}
 Assert-Equal @($Manifest.wheelArtifacts).Count $ExpectedWheelIds.Count "wheelArtifacts.Count"
 $ActualWheelIds = @($Manifest.wheelArtifacts | ForEach-Object { $_.id } | Sort-Object -Unique)
 Assert-Equal $ActualWheelIds.Count $ExpectedWheelIds.Count "wheelArtifacts.UniqueCount"
@@ -327,7 +334,8 @@ foreach ($Wheel in @($Manifest.wheelArtifacts)) {
                 "artifactArchiveSha256",
                 "requiresBuildToolchain",
                 "sameHostRepeatable",
-                "nativeExtensionValidated"
+                "nativeExtensionValidated",
+                "offlineCliValidated"
             )) {
                 if ($ExpectedWheel.ContainsKey($OptionalField)) {
                     Assert-Equal $Wheel.$OptionalField $ExpectedWheel[$OptionalField] "wheelArtifacts.$($Wheel.id).$OptionalField"

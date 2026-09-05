@@ -119,11 +119,20 @@
     },
     {
       "id": "bilibili-cli-0.6.2",
-      "status": "pending-d2-build",
+      "status": "ready",
       "sourceType": "git-commit",
       "sourceCommit": "dbe28551930df43b633baa52e9639832aeada967",
-      "fileName": null,
-      "sha256": null
+      "sourceTree": "4fa5eba3f90bf79f15cb6676a1aae39abb2da578",
+      "sourceArchiveSize": 201153,
+      "sourceArchiveSha256": "e096d3d2f38a87838cf51c515e9eed0bdca472fc3ab0defd7e12a7cd05b5b175",
+      "fileName": "bilibili_cli-0.6.2-py3-none-any.whl",
+      "size": 47713,
+      "sha256": "5d4931790104f4f39422e7a5fcb64af6d13c2fad92f0011e5b4d8b1a2359c729",
+      "tag": "py3-none-any",
+      "sameHostRepeatable": true,
+      "recordValidated": true,
+      "isolatedImportValidated": true,
+      "offlineCliValidated": true
     },
     {
       "id": "newspaper4k-0.9.6",

@@ -24,9 +24,18 @@
         "status": "pending_d4_distribution_review"
       },
       "wheel": {
-        "status": "pending_d2_build",
-        "filename": null,
-        "sha256": null
+        "status": "ready",
+        "source_tree": "4fa5eba3f90bf79f15cb6676a1aae39abb2da578",
+        "source_archive_size": 201153,
+        "source_archive_sha256": "e096d3d2f38a87838cf51c515e9eed0bdca472fc3ab0defd7e12a7cd05b5b175",
+        "filename": "bilibili_cli-0.6.2-py3-none-any.whl",
+        "size": 47713,
+        "sha256": "5d4931790104f4f39422e7a5fcb64af6d13c2fad92f0011e5b4d8b1a2359c729",
+        "tag": "py3-none-any",
+        "same_host_repeatable": true,
+        "record_validated": true,
+        "isolated_import_validated": true,
+        "offline_cli_validated": true
       }
     },
     {

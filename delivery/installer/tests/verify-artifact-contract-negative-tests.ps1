@@ -114,16 +114,13 @@ try {
     $ForwardUncPathResult = Invoke-Contract -Mode "PlanOnly" -ManifestPath $ForwardUncPathFixture
     Assert-FailedWith $ForwardUncPathResult "contains a local or protected source path" "Forward-slash UNC path check"
 
-    $UnapprovedReadyManifest = Get-Content -Raw -Encoding UTF8 -LiteralPath $SourceManifest | ConvertFrom-Json
-    $FutureWheel = @($UnapprovedReadyManifest.wheelArtifacts | Where-Object { $_.id -eq "bilibili-cli-0.6.2" })[0]
-    $FutureWheel.status = "ready"
-    $FutureWheel.fileName = "bilibili_cli-0.6.2-py3-none-any.whl"
-    $FutureWheel.sha256 = "0" * 64
-    $FutureWheel | Add-Member -NotePropertyName "size" -NotePropertyValue 1
-    $UnapprovedReadyFixture = New-FixturePath
-    Write-Fixture $UnapprovedReadyManifest $UnapprovedReadyFixture
-    $UnapprovedReadyResult = Invoke-Contract -Mode "PlanOnly" -ManifestPath $UnapprovedReadyFixture
-    Assert-FailedWith $UnapprovedReadyResult "ready without a pinned approved contract" "Unapproved ready artifact check"
+    $TamperedWheelManifest = Get-Content -Raw -Encoding UTF8 -LiteralPath $SourceManifest | ConvertFrom-Json
+    $TamperedWheel = @($TamperedWheelManifest.wheelArtifacts | Where-Object { $_.id -eq "bilibili-cli-0.6.2" })[0]
+    $TamperedWheel.sha256 = "0" * 64
+    $TamperedWheelFixture = New-FixturePath
+    Write-Fixture $TamperedWheelManifest $TamperedWheelFixture
+    $TamperedWheelResult = Invoke-Contract -Mode "PlanOnly" -ManifestPath $TamperedWheelFixture
+    Assert-FailedWith $TamperedWheelResult "sha256 must be" "Tampered ready wheel check"
 
     $UnapprovedBrowserManifest = Get-Content -Raw -Encoding UTF8 -LiteralPath $SourceManifest | ConvertFrom-Json
     $FutureBrowser = @($UnapprovedBrowserManifest.browserArtifacts | Where-Object { $_.id -eq "chromium-1228-win64" })[0]
@@ -148,7 +145,7 @@ try {
     $UnexpectedPendingFixture = New-FixturePath
     Write-Fixture $UnexpectedPendingManifest $UnexpectedPendingFixture
     $UnexpectedPendingResult = Invoke-Contract -Mode "PlanOnly" -ManifestPath $UnexpectedPendingFixture
-    Assert-FailedWith $UnexpectedPendingResult "status must be 'pending-d2-build'" "Unexpected pending state check"
+    Assert-FailedWith $UnexpectedPendingResult "status must be 'ready'" "Unexpected ready wheel state check"
 
     $ReleaseReadyResult = Invoke-Contract -Mode "ReleaseReady" -ManifestPath $SourceManifest
     Assert-FailedWith $ReleaseReadyResult "distribution gate\(s\) are not approved" "Current ReleaseReady gate"
