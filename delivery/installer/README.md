@@ -1,4 +1,6 @@
-# D2 Windows 在线安装器原型
+# D2 已锁定制品（原在线安装器路线）
+
+> 2026-09-05：用户已接受更简单的自包含便携目录方案，在线安装器路线停止继续开发。下文保留为历史约束、制品锁定和验证证据；它不是当前交付形态，也不能作为便携交付合同。当前决定和进度见 `../portable/README.md`。
 
 本目录已建立安装器合同，并锁定了构建工具、6 个 wheel（4 个本地预构建、1 个 PyPI 官方 wheel、1 个 GitHub Actions 构建的 Windows 原生 wheel）与 6 个浏览器/工具归档；它仍不是安装包，也不会修改本机 Python、PATH、注册表或 API Key。合同的作用是先把后续实现不得突破的边界变成可执行检查。
 
@@ -57,12 +59,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\delivery\installer\tests\v
 - Playwright 要求 Python 包版本与浏览器二进制配套，并支持用 `PLAYWRIGHT_BROWSERS_PATH` 指定私有浏览器目录：[Playwright 浏览器管理](https://playwright.dev/python/docs/browsers#managing-browser-binaries)。
 - Inno Setup 的 `PrivilegesRequired=lowest` 使用非管理员安装模式；开始菜单和卸载信息归当前用户：[Inno Setup 非管理员模式](https://jrsoftware.org/ishelp/topic_admininstallmode.htm)。
 - Inno Setup 明确提醒卸载时不要无警告删除用户放在应用目录中的数据：[Inno Setup UninstallDelete](https://jrsoftware.org/ishelp/topic_uninstalldeletesection.htm)。
-- 当前原型计划固定 Inno Setup 7.1.0 x64；其官方下载页同时提供版本、发布日期和签名验证入口：[Inno Setup 下载](https://jrsoftware.org/isdl.php)。商业使用许可是否适用继续作为 D4 审查项。
+- 原安装器路线固定过 Inno Setup 7.1.0 x64；其官方下载页同时提供版本、发布日期和签名验证入口：[Inno Setup 下载](https://jrsoftware.org/isdl.php)。只有用户将来重新启用安装器路线时，才需要恢复其商业许可适用性审查。
 
-## 尚未完成
+## 原路线未实施项（不再继续）
 
-- 实际准备私有运行时、加载器和 Inno Setup 定义。
-- 验证安装、重复启动、定向停止、修复、覆盖升级、数据保留和卸载。
-- 完成白名单、敏感扫描、许可证审查、干净 Win11 验收和用户批准门禁。
+- 没有制作 Inno Setup 定义，也没有生成或运行安装器。
+- 原安装器的安装、修复、覆盖升级和卸载测试不再执行；对应风险改由便携目录的组装、搬迁、启停和后续数据边界验收覆盖。
+- 白名单、敏感扫描、第三方许可证、干净 Win11 和用户批准门禁仍然有效，当前进度以 `../portable/README.md` 为准。
 
-以上未完成项全部完成前，本目录不能被描述为“可发布安装包”。
+本目录只能作为历史制品证据，不得被描述为“可发布安装包”。

@@ -26,9 +26,9 @@
 - [Inno Setup 7.1.0 Release](https://github.com/jrsoftware/issrc/releases/tag/is-7_1_0)
 - [Inno Setup 下载验证说明](https://jrsoftware.org/isdl-verify.php)
 
-## 仍然阻断正式发布的事项
+## 状态更新（2026-09-05）
 
-- 六个 wheel 尚未预构建并锁定。
-- 五个浏览器压缩包尚未锁定 URL、大小和 SHA256。
-- Inno Setup 商业许可适用性、Bilibili GPL 分发义务和其他第三方许可证仍待 D4 审查。
-- 尚未制作、安装或运行任何安装器原型。
+- 本文件最初记录的“wheel 和浏览器尚未锁定”是 2026-09-01 的历史快照，现已由 `WHEEL_VERIFICATION.md`、`BROWSER_VERIFICATION.md` 和当前 `runtime-manifest.json` 完成更新；只读合同结果为 `PENDING_ARTIFACTS=0`。
+- 用户已改选自包含便携目录，Inno Setup 不再是当前交付链输入；其归档与签名证据保留，但不会因此进入候选。
+- 当前仍有 `UNAPPROVED_DISTRIBUTION_GATES=2`：Bilibili API 的 GPL 传递依赖审查，以及 newspaper4k 内嵌 Apache-2.0 资源的许可证文本义务。
+- 尚未生成、压缩、发送或发布任何正式候选。当前技术原型状态见 `../portable/README.md`。
