@@ -460,6 +460,7 @@ class NewsCrawler:
         source_strategy: str = "all",
         min_real_results: int = None,
         progress_callback: Optional[Callable[[Dict], None]] = None,
+        cancel_callback: Optional[Callable[[], bool]] = None,
         source_acceptance: bool = False,
     ) -> List[Dict]:
         """
@@ -496,6 +497,15 @@ class NewsCrawler:
         province, city = self._parse_region(region)
         started_at = datetime.now()
         self._auth_probe_cache = {}
+        cancelled = False
+
+        def should_cancel() -> bool:
+            nonlocal cancelled
+            if not cancelled and cancel_callback:
+                cancelled = bool(cancel_callback())
+            return cancelled
+
+        cancel_kwargs = {"cancel_callback": should_cancel} if cancel_callback else {}
 
         logger.info(f"开始采集: 关键词={keywords}, 地区={region or '全国'}")
         logger.info(
@@ -520,10 +530,22 @@ class NewsCrawler:
             failures.append({"channel": "dependency", "url": "", "error": message})
 
         group_results = {"stable": [], "public_news": [], "social": []}
-        if CRAWLER_AVAILABLE:
+
+        def collected_count() -> int:
+            combined = []
+            for group in group_results.values():
+                combined.extend(group)
+            return len(self._deduplicate_results(combined))
+
+        def target_reached() -> bool:
+            return collected_count() >= target_count
+
+        if CRAWLER_AVAILABLE and not should_cancel():
             try:
                 if source_strategy in ("all", "stable"):
                     for keyword in keywords:
+                        if should_cancel():
+                            break
                         stable_requests_all = self._build_stable_source_requests(
                             keyword=keyword,
                             province=None if self._source_acceptance_mode else province,
@@ -542,6 +564,7 @@ class NewsCrawler:
                             end_time=None if self._source_acceptance_mode else end_time,
                             remaining=max(target_count - len(group_results["stable"]), 0),
                             progress_callback=progress_callback,
+                            **cancel_kwargs,
                         )
                         group_results["stable"] = self._deduplicate_results(
                             group_results["stable"] + collected
@@ -557,6 +580,7 @@ class NewsCrawler:
                             and stable_real_count < min_real
                             and len(stable_requests_all) > len(stable_requests)
                             and len(group_results["stable"]) < target_count
+                            and not should_cancel()
                         ):
                             extra_requests = stable_requests_all[len(stable_requests):]
                             collected, source_failures = self._collect_source_requests_safely(
@@ -570,23 +594,35 @@ class NewsCrawler:
                                     target_count - len(group_results["stable"]), 0
                                 ),
                                 progress_callback=progress_callback,
+                                **cancel_kwargs,
                             )
                             group_results["stable"] = self._deduplicate_results(
                                 group_results["stable"] + collected
                             )
                             failures.extend(source_failures)
                             logger.info(f"政府官网补充采集关键词 '{keyword}' 新增 {len(collected)} 条")
-                        if len(group_results["stable"]) >= target_count:
+                        if should_cancel() or len(group_results["stable"]) >= target_count:
                             break
 
-                if source_strategy in ("all", "public_news"):
+                if (
+                    source_strategy in ("all", "public_news")
+                    and not target_reached()
+                    and not should_cancel()
+                ):
                     for keyword in keywords:
+                        if target_reached() or should_cancel():
+                            break
                         public_news_requests = self._build_public_news_source_requests(
                             keyword=keyword,
                             province=province,
                             city=city,
                         )
                         for public_request in public_news_requests:
+                            if should_cancel():
+                                break
+                            remaining = max(target_count - collected_count(), 0)
+                            if remaining <= 0:
+                                break
                             collected, source_failures = self._collect_source_requests_safely(
                                 source_requests=[public_request],
                                 keyword=keyword,
@@ -594,8 +630,9 @@ class NewsCrawler:
                                 collect_level=collect_level,
                                 start_time=start_time,
                                 end_time=end_time,
-                                remaining=target_count,
+                                remaining=remaining,
                                 progress_callback=progress_callback,
+                                **cancel_kwargs,
                             )
                             group_results["public_news"] = self._deduplicate_results(
                                 group_results["public_news"] + collected
@@ -605,22 +642,32 @@ class NewsCrawler:
                                 f"公开网页/新闻来源 '{public_request['channel']}' "
                                 f"关键词 '{keyword}' 新增 {len(collected)} 条"
                             )
+                            if target_reached() or should_cancel():
+                                break
                     group_results["public_news"] = self._limit_results_with_platform_coverage(
                         records=group_results["public_news"],
                         max_results=target_count,
                         platforms=[source["platform"] for source in PUBLIC_DISCOVERY_SOURCES],
                     )
 
-                if source_strategy in ("all", "social"):
+                if (
+                    source_strategy in ("all", "social")
+                    and not target_reached()
+                    and not should_cancel()
+                ):
                     social_results_by_platform = {platform: [] for platform in social_platforms}
                     for platform in social_platforms:
+                        if target_reached() or should_cancel():
+                            break
                         for keyword in keywords:
+                            if target_reached() or should_cancel():
+                                break
                             social_requests = self._build_social_source_requests(platform, keyword, province, city)
                             if not level_config.get("multi_channel", True):
                                 social_requests = social_requests[:1]
-                            remaining = max(
-                                target_count - len(social_results_by_platform[platform]), 0
-                            )
+                            remaining = max(target_count - collected_count(), 0)
+                            if remaining <= 0:
+                                break
                             collected, source_failures = self._collect_source_requests_safely(
                                 source_requests=social_requests,
                                 keyword=keyword,
@@ -630,13 +677,18 @@ class NewsCrawler:
                                 end_time=end_time,
                                 remaining=remaining,
                                 progress_callback=progress_callback,
+                                **cancel_kwargs,
                             )
                             social_results_by_platform[platform] = self._deduplicate_results(
                                 social_results_by_platform[platform] + collected
                             )
+                            social_combined = []
+                            for platform_results in social_results_by_platform.values():
+                                social_combined.extend(platform_results)
+                            group_results["social"] = self._deduplicate_results(social_combined)
                             failures.extend(source_failures)
                             logger.info(f"社交增强平台 '{platform}' 关键词 '{keyword}' 新增 {len(collected)} 条")
-                            if len(social_results_by_platform[platform]) >= target_count:
+                            if target_reached() or should_cancel():
                                 break
                     social_combined = []
                     for platform in social_platforms:
@@ -679,14 +731,16 @@ class NewsCrawler:
             time_range=time_range,
             collect_level=collect_level,
             source_strategy=source_strategy,
+            target_results=target_count,
             min_real_results=min_real,
             failures=failures,
             started_at=started_at,
             source_acceptance=self._source_acceptance_mode,
         )
+        self.last_meta["cancelled"] = should_cancel()
         self._emit_progress(progress_callback, {
-            "type": "crawl_complete",
-            "message": "采集任务完成",
+            "type": "crawl_cancelled" if cancelled else "crawl_complete",
+            "message": "采集任务已中止" if cancelled else "采集任务完成",
             "summary": self.last_meta.get("summary", {}),
         })
         return results
@@ -2897,6 +2951,7 @@ class NewsCrawler:
         end_time: Optional[datetime],
         remaining: int,
         progress_callback: Optional[Callable[[Dict], None]] = None,
+        cancel_callback: Optional[Callable[[], bool]] = None,
     ) -> Tuple[List[Dict], List[Dict]]:
         records = []
         failures = []
@@ -2904,6 +2959,8 @@ class NewsCrawler:
             return records, failures
 
         for request_info in source_requests:
+            if cancel_callback and cancel_callback():
+                break
             if len(records) >= remaining:
                 break
             channel = request_info["channel"]
@@ -2995,6 +3052,8 @@ class NewsCrawler:
                 continue
 
             self.anti_crawl.delay()
+            if cancel_callback and cancel_callback():
+                break
             request_started = datetime.now()
             self._emit_progress(progress_callback, {
                 "type": "source_start",
@@ -4695,6 +4754,7 @@ class NewsCrawler:
         time_range: str,
         collect_level: str,
         source_strategy: str,
+        target_results: int,
         min_real_results: int,
         failures: List[Dict],
         started_at: datetime,
@@ -4830,6 +4890,7 @@ class NewsCrawler:
             "region": region,
             "time_range": time_range,
             "collect_level": collect_level,
+            "target_results": target_results,
             "source_strategy": source_strategy,
             "active_source_groups": active_source_groups,
             "source_acceptance_mode": bool(source_acceptance),
@@ -5383,6 +5444,7 @@ def crawl_and_save(
     min_real_results: int = None,
     meta_path: str = None,
     progress_callback: Optional[Callable[[Dict], None]] = None,
+    cancel_callback: Optional[Callable[[], bool]] = None,
     use_system_proxy: bool = False,
     use_external_social_adapters: bool = True,
     enable_debug_snapshots: bool = False,
@@ -5431,6 +5493,7 @@ def crawl_and_save(
         source_strategy=source_strategy,
         min_real_results=min_real_results,
         progress_callback=progress_callback,
+        cancel_callback=cancel_callback,
         source_acceptance=source_acceptance,
     )
 

@@ -19,6 +19,7 @@ def monitor_payload(**overrides):
         "region": "天津",
         "source_strategy": "social",
         "collect_level": "最小采集",
+        "max_results": 37,
         "time_range": "近一周",
         "stable_sources": [],
         "social_platforms": ["微博"],
@@ -83,6 +84,9 @@ class MonitoringTests(unittest.TestCase):
         plan = manager.create_plan(monitor_payload(), 15)
 
         self.assertEqual(plan["payload"]["social_platforms"], ["微博"])
+        self.assertEqual(plan["payload"]["max_results"], 37)
+        self.assertEqual(plan["payload"]["min_real_results"], 37)
+        self.assertEqual(plan["payload"]["collect_level"], "标准采集")
         raw = self.state_file.read_text(encoding="utf-8")
         self.assertNotIn("secret-user", raw)
         self.assertNotIn("secret-password", raw)

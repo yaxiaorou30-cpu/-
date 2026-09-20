@@ -239,7 +239,7 @@ class CrawlerParsingTests(unittest.TestCase):
         self.assertEqual(enriched, ["https://www.example.gov.cn/notices/1"])
         self.assertEqual(records[0]["body_fetch_status"], "failed")
 
-    def test_public_news_attempts_every_keyword_and_discovery_source_before_limiting(self):
+    def test_public_news_stops_after_target_is_reached(self):
         calls = []
 
         def fake_collect(**kwargs):
@@ -264,15 +264,7 @@ class CrawlerParsingTests(unittest.TestCase):
             min_real_results=0,
         )
 
-        self.assertEqual(
-            calls,
-            [
-                ("关键词一", "bing_news_rss"),
-                ("关键词一", "baidu_qianfan_web_search"),
-                ("关键词二", "bing_news_rss"),
-                ("关键词二", "baidu_qianfan_web_search"),
-            ],
-        )
+        self.assertEqual(calls, [("关键词一", "bing_news_rss")])
         self.assertEqual(len(records), 1)
         quality = self.crawler.last_meta["quality_assessment"]
         check_ids = {item["id"] for item in quality["checks"]}
@@ -280,7 +272,7 @@ class CrawlerParsingTests(unittest.TestCase):
         self.assertNotIn("government_sources", check_ids)
         self.assertNotEqual(quality["status_code"], "collection_failed")
 
-    def test_public_news_limit_keeps_bing_and_baidu_coverage(self):
+    def test_public_news_does_not_start_baidu_after_bing_reaches_target(self):
         def fake_collect(**kwargs):
             request = kwargs["source_requests"][0]
             if request["parser"] == "bing_news_rss":
@@ -312,10 +304,7 @@ class CrawlerParsingTests(unittest.TestCase):
         )
 
         self.assertEqual(len(records), 2)
-        self.assertEqual(
-            {item["platform"] for item in records},
-            {"Bing 新闻", "百度网页"},
-        )
+        self.assertEqual({item["platform"] for item in records}, {"Bing 新闻"})
 
     def test_baidu_qianfan_results_use_common_article_enrichment_chain(self):
         calls = []
@@ -507,7 +496,7 @@ class CrawlerParsingTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "结束日期不能早于开始日期"):
             self.crawler._parse_time_range("2026-07-28 至 2026-07-01")
 
-    def test_social_collection_attempts_every_selected_platform_and_balances_results(self):
+    def test_social_collection_stops_after_first_platform_reaches_target(self):
         platforms = ["微博", "B站", "小红书", "抖音", "百度贴吧"]
         attempts = []
 
@@ -540,12 +529,9 @@ class CrawlerParsingTests(unittest.TestCase):
             min_real_results=1,
         )
 
-        self.assertEqual(attempts, platforms)
+        self.assertEqual(attempts, ["微博"])
         self.assertEqual(len(data), 10)
-        counts = {platform: 0 for platform in platforms}
-        for item in data:
-            counts[item["platform"]] += 1
-        self.assertEqual(counts, {platform: 2 for platform in platforms})
+        self.assertEqual({item["platform"] for item in data}, {"微博"})
 
     def test_extract_douyin_search_api_payload(self):
         payload = {
@@ -1684,6 +1670,41 @@ class CrawlerPolicyTests(unittest.TestCase):
         self.assertEqual(summary["stable_real_count"], 1)
         self.assertEqual(summary["public_news_real_count"], 1)
         self.assertEqual(summary["social_real_count"], 1)
+        self.assertEqual(self.crawler.last_meta["target_results"], 3)
+
+    def test_all_strategy_stops_starting_sources_after_target_is_reached(self):
+        calls = []
+
+        def fake_collect(source_requests, **kwargs):
+            source_group = source_requests[0]["source_group"]
+            calls.append(source_group)
+            return [
+                {
+                    "title": f"政府官网结果 {index}",
+                    "content": "政府官网公开信息。",
+                    "url": f"https://gov.example.cn/notices/{index}",
+                    "platform": "测试政府官网",
+                    "source": "测试政府官网",
+                    "source_group": "stable",
+                    "source_type": "official",
+                    "data_type": "real",
+                    "pub_time": "2026-09-20T10:00:00",
+                }
+                for index in range(2)
+            ], []
+
+        self.crawler._collect_from_source_requests = fake_collect
+        data = self.crawler.crawl(
+            ["达到目标停止"],
+            max_results=2,
+            collect_level="深度采集",
+            source_strategy="all",
+            social_platforms=["微博"],
+            min_real_results=2,
+        )
+
+        self.assertEqual(len(data), 2)
+        self.assertEqual(calls, ["stable"])
 
     def test_all_strategy_runs_social_when_other_groups_have_no_results(self):
         calls = []

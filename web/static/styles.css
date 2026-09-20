@@ -1270,25 +1270,6 @@ textarea::placeholder {
   padding: 22px;
 }
 
-.heat-readout {
-  display: grid;
-  min-width: 90px;
-  padding-left: 18px;
-  border-left: 1px solid var(--ink-200);
-  text-align: right;
-}
-
-.heat-readout span {
-  color: var(--ink-500);
-  font-size: 10px;
-}
-
-.heat-readout strong {
-  color: var(--amber-700);
-  font-size: 24px;
-  line-height: 1.2;
-}
-
 .quality-note {
   min-height: 42px;
   margin: 20px 0 0;

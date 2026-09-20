@@ -137,6 +137,7 @@ class WebAccountStoreTests(unittest.TestCase):
                 "region": "天津",
                 "source_strategy": "stable_first",
                 "collect_level": "快速采集",
+                "max_results": "37",
                 "time_range": "2026-07-01 至 2026-07-31",
                 "stable_sources": ["天津市政府新闻发布会"],
                 "social_platforms": ["微博"],
@@ -155,6 +156,7 @@ class WebAccountStoreTests(unittest.TestCase):
         safe = web_app.sanitize_task_history_entry(entry)
 
         self.assertEqual(safe["payload"]["min_real_results"], 8)
+        self.assertEqual(safe["payload"]["max_results"], 37)
         self.assertEqual(safe["summary"]["real_count"], 10)
         self.assertEqual(safe["summary"]["public_news_real_count"], 2)
         self.assertNotIn("quality_conclusion", safe["summary"])
@@ -201,6 +203,7 @@ class WebAccountStoreTests(unittest.TestCase):
         summary = web_app.task_payload_summary(
             {
                 "topic": "测试任务",
+                "max_results": "42",
                 "min_real_results": "6",
                 "accounts": {
                     "微博": {
@@ -213,6 +216,7 @@ class WebAccountStoreTests(unittest.TestCase):
         )
 
         self.assertEqual(summary["min_real_results"], 6)
+        self.assertEqual(summary["max_results"], 42)
         self.assertEqual(summary["account_platforms"], ["微博"])
         serialized = str(summary)
         self.assertNotIn("private-user", serialized)

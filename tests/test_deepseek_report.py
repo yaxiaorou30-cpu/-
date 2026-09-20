@@ -14,6 +14,7 @@ from src.deepseek_report import (
     DeepSeekReportClient,
     DeepSeekReportError,
     build_ai_report_disclosure,
+    build_deepseek_batch_requests,
     build_deepseek_request,
     deepseek_configuration_status,
     validate_ai_report_output,
@@ -269,7 +270,7 @@ class DeepSeekReportTests(unittest.TestCase):
         )
 
         prompt = "\n".join(message["content"] for message in payload["messages"])
-        self.assertEqual(deepseek_report_module.PROMPT_VERSION, "reviewed-report-v5")
+        self.assertEqual(deepseek_report_module.PROMPT_VERSION, "reviewed-report-v6-batched")
         self.assertIn("必须输出以下 JSON 结构", prompt)
         self.assertNotIn("每章仅写一个连续段落", prompt)
         self.assertNotIn("每个章节必须至少包含一个有效[S编号]", prompt)
@@ -537,43 +538,27 @@ class DeepSeekReportTests(unittest.TestCase):
         self.assertLess(len(normalized_input_lengths), 128)
         self.assertLessEqual(max(normalized_input_lengths, default=0), 12_000)
 
-    def test_quality_defaults_use_pro_model_and_32768_output_budget(self):
-        payload, _ = build_deepseek_request(
+    def test_batch_requests_use_pro_model_and_provider_output_ceiling(self):
+        payloads, _ = build_deepseek_batch_requests(
             [self.public_record, self.login_record],
             self.preview,
         )
         status = deepseek_configuration_status({"DEEPSEEK_API_KEY": "configured"})
 
-        self.assertEqual(payload["model"], "deepseek-v4-pro")
-        self.assertEqual(payload["max_tokens"], 32768)
+        self.assertTrue(payloads)
+        self.assertTrue(all(payload["model"] == "deepseek-v4-pro" for payload in payloads))
+        self.assertTrue(all(payload["max_tokens"] == 384000 for payload in payloads))
         self.assertEqual(status["model"], "deepseek-v4-pro")
 
-    def test_output_budget_allows_quality_ranges_up_to_provider_limit(self):
-        for max_tokens in (8192, 32768, 384000):
-            with self.subTest(max_tokens=max_tokens):
-                payload, _ = build_deepseek_request(
-                    [self.public_record, self.login_record],
-                    self.preview,
-                    max_tokens=max_tokens,
-                )
-                self.assertEqual(payload["max_tokens"], max_tokens)
-
-        with self.assertRaisesRegex(DeepSeekReportError, "384000"):
-            build_deepseek_request(
-                [self.public_record, self.login_record],
-                self.preview,
-                max_tokens=384001,
-            )
-
-    def test_scope_confirmation_token_binds_the_output_budget(self):
-        _, default_scope = build_deepseek_request(
+    def test_scope_confirmation_token_binds_the_complete_batch_plan(self):
+        _, default_scope = build_deepseek_batch_requests(
             [self.public_record, self.login_record],
             self.preview,
         )
-        _, larger_scope = build_deepseek_request(
+        _, smaller_batch_scope = build_deepseek_batch_requests(
             [self.public_record, self.login_record],
             self.preview,
-            max_tokens=65536,
+            input_budget_tokens=64_000,
         )
         disclosure = build_ai_report_disclosure(
             [self.public_record, self.login_record],
@@ -582,7 +567,7 @@ class DeepSeekReportTests(unittest.TestCase):
         )
 
         self.assertEqual(disclosure["scope_token"], default_scope["scope_token"])
-        self.assertNotEqual(default_scope["scope_token"], larger_scope["scope_token"])
+        self.assertNotEqual(default_scope["scope_token"], smaller_batch_scope["scope_token"])
 
     def test_unreviewed_evidence_remains_excluded_after_scope_is_relaxed(self):
         preview = {
@@ -651,10 +636,10 @@ class DeepSeekReportTests(unittest.TestCase):
         self.assertEqual(disclosure["evidence_count"], 2)
         self.assertEqual(disclosure["eligible_record_count"], 2)
         self.assertEqual(disclosure["login_record_count"], 1)
-        self.assertEqual(disclosure["quality_mode"], "quality_first")
+        self.assertEqual(disclosure["quality_mode"], "complete_batching")
         self.assertTrue(disclosure["thinking_enabled"])
         self.assertEqual(disclosure["reasoning_effort"], "max")
-        self.assertEqual(disclosure["max_output_tokens"], 32768)
+        self.assertEqual(disclosure["max_output_tokens"], 384000)
         self.assertEqual(len(disclosure["scope_token"]), 64)
         int(disclosure["scope_token"], 16)
         self.assertNotIn(self.public_record["content"], serialized)
@@ -685,7 +670,7 @@ class DeepSeekReportTests(unittest.TestCase):
         self.assertEqual(disclosure["evidence_count"], 1)
         self.assertTrue(disclosure["can_generate"])
 
-    def test_single_confirmation_makes_exactly_one_request_and_returns_usage(self):
+    def test_single_confirmation_runs_batch_analysis_then_final_generation(self):
         calls = []
 
         def fake_post(url, **kwargs):
@@ -698,11 +683,12 @@ class DeepSeekReportTests(unittest.TestCase):
         )
         result = client.generate([self.public_record, self.login_record], self.preview)
 
-        self.assertEqual(len(calls), 1)
+        self.assertEqual(len(calls), 2)
         self.assertEqual(calls[0][0], "https://api.deepseek.com/chat/completions")
         self.assertEqual(calls[0][1]["timeout"], (5, 120))
-        self.assertEqual(result["usage"]["total_tokens"], 420)
-        self.assertEqual(result["scope"]["evidence_ids"], ["S1", "S2"])
+        self.assertEqual(result["usage"]["total_tokens"], 840)
+        self.assertEqual(result["scope"]["evidence_ids"], ["R1", "R2"])
+        self.assertEqual(result["scope"]["provider_call_count"], 2)
         self.assertEqual(result["sections"], self.valid_sections_with_two_evidence())
         self.assertIn("风险提示", result["section_overrides"]["analysis"])
         self.assertNotIn("deepseek-key-secret", json.dumps(result, ensure_ascii=False))
@@ -848,7 +834,7 @@ class DeepSeekReportTests(unittest.TestCase):
 
     def test_truncated_or_empty_model_response_is_rejected(self):
         for finish_reason, content, message in (
-            ("length", json.dumps({"sections": self.valid_sections()}), "达到输出长度上限"),
+            ("length", json.dumps({"sections": self.valid_sections()}), "达到.*长度上限"),
             ("stop", "", "返回了空内容"),
         ):
             with self.subTest(finish_reason=finish_reason, content=content):
@@ -1184,7 +1170,7 @@ class WebDeepSeekHandlerTests(unittest.TestCase):
         disclosure = handler.response["preview"]["ai_assistance"]
         self.assertTrue(disclosure["configured"])
         self.assertFalse(disclosure["automatic_call"])
-        self.assertEqual(disclosure["evidence_ids"], ["S1"])
+        self.assertEqual(disclosure["evidence_ids"], ["R1"])
         self.assertTrue(disclosure["confirmation_id"])
         self.assertNotIn("test-session-token", json.dumps(disclosure))
 
@@ -1218,26 +1204,27 @@ class DeepSeekReportUiContractTests(unittest.TestCase):
     def test_ai_scope_copy_includes_reviewed_login_records(self):
         self.assertIn("disclosure.eligible_record_count", self.javascript)
         self.assertIn("disclosure.login_record_count", self.javascript)
-        self.assertIn("已审核候选", self.javascript)
+        self.assertIn("审核通过", self.javascript)
         self.assertNotIn("已审核可发送", self.javascript)
         self.assertNotIn("排除登录/非公开", self.javascript)
         self.assertIn("未审核数据不会发送", self.javascript)
         self.assertIn("用户已按甲方规则确认本次发送范围", self.javascript)
         self.assertIn("confirmed_scope_token: state.aiDisclosure.scope_token", self.javascript)
 
-    def test_ai_panel_discloses_quality_mode_and_output_budget(self):
-        self.assertIn("质量优先", self.javascript)
+    def test_ai_panel_discloses_complete_batching_and_provider_limit(self):
+        self.assertIn("全量分批", self.javascript)
         self.assertIn("深度思考", self.javascript)
         self.assertIn("disclosure.reasoning_effort", self.javascript)
         self.assertIn("disclosure.max_output_tokens", self.javascript)
         self.assertIn("disclosure.input_budget_tokens", self.javascript)
         self.assertIn("disclosure.estimated_input_tokens", self.javascript)
-        self.assertIn("disclosure.candidate_evidence_count", self.javascript)
-        self.assertIn("disclosure.omitted_due_input_budget_count", self.javascript)
-        self.assertIn("disclosure.truncated_evidence_count", self.javascript)
-        self.assertIn("实际发送", self.javascript)
-        self.assertIn("因预算省略", self.javascript)
-        self.assertIn("正文截取", self.javascript)
+        self.assertIn("disclosure.sent_record_count", self.javascript)
+        self.assertIn("disclosure.batch_count", self.javascript)
+        self.assertIn("disclosure.chunk_count", self.javascript)
+        self.assertIn("完整发送", self.javascript)
+        self.assertIn("无省略", self.javascript)
+        self.assertIn("无截断", self.javascript)
+        self.assertIn("按所示批次向第三方 AI 发起多次请求", self.html)
 
     def test_ai_endpoint_is_only_called_by_explicit_generate_action(self):
         self.assertEqual(self.javascript.count('requestJson("/api/report-ai-draft"'), 1)

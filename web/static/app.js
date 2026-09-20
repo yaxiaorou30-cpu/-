@@ -3,12 +3,11 @@ const els = {
   taskTopic: document.getElementById("taskTopic"),
   keywords: document.getElementById("keywords"),
   region: document.getElementById("region"),
-  minRealResults: document.getElementById("minRealResults"),
+  targetResultCount: document.getElementById("targetResultCount"),
   timeRange: document.getElementById("timeRange"),
   customDateRange: document.getElementById("customDateRange"),
   startDate: document.getElementById("startDate"),
   endDate: document.getElementById("endDate"),
-  collectLevel: document.getElementById("collectLevel"),
   stableSources: document.getElementById("stableSources"),
   socialPlatforms: document.getElementById("socialPlatforms"),
   siteSessionCard: document.getElementById("siteSessionCard"),
@@ -25,6 +24,7 @@ const els = {
   useSystemProxy: document.getElementById("useSystemProxy"),
   saveDiagnostics: document.getElementById("saveDiagnostics"),
   crawlBtn: document.getElementById("crawlBtn"),
+  cancelCrawlBtn: document.getElementById("cancelCrawlBtn"),
   monitorInterval: document.getElementById("monitorInterval"),
   monitorBtn: document.getElementById("monitorBtn"),
   monitorRefreshBtn: document.getElementById("monitorRefreshBtn"),
@@ -88,7 +88,6 @@ const els = {
   socialCount: document.getElementById("socialCount"),
   qualityStatus: document.getElementById("qualityStatus"),
   qualityChecklist: document.getElementById("qualityChecklist"),
-  heatIndex: document.getElementById("heatIndex"),
   qualityNote: document.getElementById("qualityNote"),
   dataPath: document.getElementById("dataPath"),
   complianceNotice: document.getElementById("complianceNotice"),
@@ -153,6 +152,8 @@ const state = {
   latest: null,
   taskId: null,
   taskPoll: null,
+  crawlRunning: false,
+  crawlCancelPending: false,
   monitorPlans: [],
   selectedMonitorId: null,
   monitorPoll: null,
@@ -177,12 +178,25 @@ const state = {
   recoveryConfigured: false,
 };
 
-const COLLECT_LEVEL_COPY = {
-  最小采集: { label: "最多 10 条 · 功能测试", maximum: 10, automaticMinimum: 10 },
-  快速采集: { label: "最多 20 条 · 快速查看", maximum: 20, automaticMinimum: 20 },
-  标准采集: { label: "最多 50 条 · 日常任务", maximum: 50, automaticMinimum: 30 },
-  深度采集: { label: "最多 100 条 · 较大范围", maximum: 100, automaticMinimum: 50 },
+const LEGACY_COLLECT_LEVEL_TARGETS = {
+  最小采集: 10,
+  快速采集: 20,
+  标准采集: 50,
+  深度采集: 100,
 };
+
+function collectionLevelForTarget(target) {
+  if (target <= 10) return "最小采集";
+  if (target <= 20) return "快速采集";
+  if (target <= 50) return "标准采集";
+  return "深度采集";
+}
+
+function historyTargetResultCount(payload = {}) {
+  const explicit = Number(payload.max_results);
+  if (Number.isInteger(explicit) && explicit >= 1 && explicit <= 5000) return explicit;
+  return LEGACY_COLLECT_LEVEL_TARGETS[payload.collect_level] || 10;
+}
 
 const VIEW_COPY = {
   task: ["新建采集任务", "填写任务主题、关键词和检索范围"],
@@ -200,6 +214,7 @@ const TASK_STATUS_COPY = {
   not_met: "结果不足",
   queued: "等待开始",
   running: "采集中",
+  cancelled: "已中止",
 };
 
 const SOURCE_STRATEGY_COPY = {
@@ -824,7 +839,7 @@ function selectedTimeRange() {
 
 function validateTaskForm() {
   els.endDate.setCustomValidity("");
-  els.minRealResults.setCustomValidity("");
+  els.targetResultCount.setCustomValidity("");
   if (
     els.timeRange.value === "自定义" &&
     els.startDate.value &&
@@ -833,40 +848,29 @@ function validateTaskForm() {
   ) {
     els.endDate.setCustomValidity("结束日期不能早于开始日期");
   }
-  const level = COLLECT_LEVEL_COPY[els.collectLevel.value];
-  if (
-    level &&
-    els.minRealResults.value &&
-    Number(els.minRealResults.value) > level.maximum
-  ) {
-    els.minRealResults.setCustomValidity(`不能超过整个任务的 ${level.maximum} 条上限`);
+  const target = Number(els.targetResultCount.value);
+  if (!Number.isInteger(target) || target < 1 || target > 5000) {
+    els.targetResultCount.setCustomValidity("请输入 1–5000 的整数");
   }
   return els.form.reportValidity();
 }
 
-function updateCollectionLimitCopy() {
-  const level = COLLECT_LEVEL_COPY[els.collectLevel.value];
-  if (!level) return;
-  els.minRealResults.max = String(level.maximum);
-  els.minRealResults.placeholder = `自动：${level.automaticMinimum} 条`;
-  els.minRealResults.setCustomValidity("");
-}
-
 function collectPayload(overrides = {}) {
-  const minReal = els.minRealResults.value.trim();
+  const targetResultCount = Number(els.targetResultCount.value);
   return {
     topic: els.taskTopic.value.trim(),
     keywords: els.keywords.value,
     region: els.region.value.trim(),
     time_range: selectedTimeRange(),
-    collect_level: els.collectLevel.value,
+    collect_level: collectionLevelForTarget(targetResultCount),
     source_strategy: selectedStrategy(),
     stable_sources: checkedValues(els.stableSources),
     social_platforms: checkedValues(els.socialPlatforms),
     accounts: collectAccounts(),
     use_system_proxy: els.useSystemProxy.checked,
     enable_debug_snapshots: els.saveDiagnostics.checked,
-    min_real_results: minReal ? Number(minReal) : null,
+    max_results: targetResultCount,
+    min_real_results: targetResultCount,
     ...overrides,
   };
 }
@@ -878,10 +882,16 @@ function setBusy(isBusy) {
   els.saveReviewBtn.disabled = isBusy;
 }
 
+function setCrawlRunning(isRunning) {
+  state.crawlRunning = Boolean(isRunning);
+  if (!state.crawlRunning) state.crawlCancelPending = false;
+  els.cancelCrawlBtn.disabled = !state.crawlRunning || state.crawlCancelPending;
+  els.cancelCrawlBtn.textContent = state.crawlCancelPending ? "正在中止…" : "中止采集";
+}
+
 function updateMetrics(latest) {
   const meta = latest.meta || {};
   const summary = meta.summary || {};
-  const heat = latest.heat || {};
   const quality = latest.quality || {};
 
   els.realCount.textContent = summary.real_count ?? 0;
@@ -891,7 +901,6 @@ function updateMetrics(latest) {
   const assessment = quality.status_code ? quality : (meta.quality_assessment || {});
   els.qualityStatus.textContent = assessment.status_label || "未检查";
   els.qualityStatus.dataset.status = assessment.status_code || "unchecked";
-  els.heatIndex.textContent = heat.heat_index ?? 0;
   els.dataPath.textContent = latest.data_path || "data/latest_news.json";
   if (els.navResultCount) els.navResultCount.textContent = String(summary.real_count ?? 0);
 
@@ -1121,16 +1130,15 @@ function showHistoryDetail(item) {
   appendHistoryDetailRow(els.historyDetailContent, "关键词", (payload.keywords || []).join("、"), true);
   appendHistoryDetailRow(els.historyDetailContent, "地区", payload.region || "全国");
   appendHistoryDetailRow(els.historyDetailContent, "时间范围", payload.time_range || "近一周");
-  appendHistoryDetailRow(els.historyDetailContent, "采集数量", payload.collect_level || "最小采集");
+  appendHistoryDetailRow(
+    els.historyDetailContent,
+    "目标采集数量",
+    `${historyTargetResultCount(payload)} 条`,
+  );
   appendHistoryDetailRow(
     els.historyDetailContent,
     "来源方式",
     SOURCE_STRATEGY_COPY[payload.source_strategy] || payload.source_strategy,
-  );
-  appendHistoryDetailRow(
-    els.historyDetailContent,
-    "结果不足提醒线",
-    payload.min_real_results == null ? "自动" : `${payload.min_real_results} 条`,
   );
   appendHistoryDetailRow(
     els.historyDetailContent,
@@ -1333,11 +1341,7 @@ function reuseHistoryConditions() {
   els.taskTopic.value = payload.topic || "";
   els.keywords.value = (payload.keywords || []).join("\n");
   els.region.value = payload.region === "全国" ? "" : payload.region || "";
-  els.minRealResults.value = payload.min_real_results == null ? "" : String(payload.min_real_results);
-
-  const levelOptions = [...els.collectLevel.options].map((option) => option.value);
-  els.collectLevel.value = levelOptions.includes(payload.collect_level) ? payload.collect_level : "最小采集";
-  updateCollectionLimitCopy();
+  els.targetResultCount.value = String(historyTargetResultCount(payload));
 
   const rangeOptions = [...els.timeRange.options].map((option) => option.value);
   const customMatch = String(payload.time_range || "").match(
@@ -2118,19 +2122,20 @@ function renderAiAssistance(disclosure) {
   const estimatedInput = Number(disclosure.estimated_input_tokens || 0).toLocaleString("zh-CN");
   els.aiProviderModel.textContent = [
     `${disclosure.provider || "DeepSeek"} · ${disclosure.model || "未配置模型"}`,
-    "质量优先",
+    "全量分批",
     `深度思考 ${disclosure.reasoning_effort || "max"}`,
-    `本次输出预算 ${outputBudget} tokens（可配置至服务商最大 ${providerMaximum}）`,
-    `保守预计输入 ${estimatedInput} / ${inputBudget} tokens`,
+    `输出采用服务商最大 ${providerMaximum || outputBudget} tokens`,
+    `累计保守预计输入 ${estimatedInput} tokens（单批容量 ${inputBudget}）`,
   ].join(" · ");
   els.aiProviderState.textContent = disclosure.configured ? "服务端已配置" : "服务端未配置";
   els.aiProviderState.dataset.status = disclosure.configured ? "ready" : "blocked";
   els.aiExternalScope.textContent = [
-    `已审核候选 ${disclosure.eligible_record_count || 0} 条`,
-    `证据目录 ${disclosure.candidate_evidence_count || 0} 条`,
-    `实际发送 ${disclosure.evidence_count || 0} 条`,
-    `因预算省略 ${disclosure.omitted_due_input_budget_count || 0} 条`,
-    `正文截取 ${disclosure.truncated_evidence_count || 0} 条`,
+    `审核通过 ${disclosure.eligible_record_count || 0} 条`,
+    `完整发送 ${disclosure.sent_record_count || 0} 条`,
+    `数据分块 ${disclosure.chunk_count || 0} 个`,
+    `预计 ${disclosure.batch_count || 0} 个原始数据批次`,
+    "无省略",
+    "无截断",
     `其中登录/非匿名访问 ${disclosure.login_record_count || 0} 条`,
   ].join(" · ");
   els.aiExternalFields.textContent = (disclosure.fields || [])
@@ -2157,7 +2162,7 @@ function renderAiDraft(draft) {
   const usage = draft?.usage || {};
   els.aiUsage.textContent = usage.total_tokens == null
     ? "服务商未返回本次 token 用量。"
-    : `本次用量：输入 ${usage.prompt_tokens ?? "-"} · 输出 ${usage.completion_tokens ?? "-"} · 合计 ${usage.total_tokens} tokens`;
+    : `本次累计用量：输入 ${usage.prompt_tokens ?? "-"} · 输出 ${usage.completion_tokens ?? "-"} · 合计 ${usage.total_tokens} tokens`;
   els.aiDraftEditor.classList.remove("hidden");
   els.aiApplyBtn.disabled = false;
   els.aiDiscardBtn.disabled = false;
@@ -2183,8 +2188,8 @@ async function generateAiReportDraft() {
   els.aiGenerateBtn.disabled = true;
   els.aiExternalSendConfirm.checked = false;
   els.aiExternalSendConfirm.disabled = true;
-  els.aiDraftStatus.textContent = "正在请求 DeepSeek；本次只发送上方披露的实际证据范围。";
-  addLog("用户已按甲方规则确认本次发送范围，开始生成 DeepSeek 分析草稿");
+  els.aiDraftStatus.textContent = "正在分批请求 DeepSeek；仅发送上方披露的完整数据范围。";
+  addLog("用户已按甲方规则确认本次发送范围，开始分批生成 DeepSeek 分析草稿");
   try {
     const result = await requestJson("/api/report-ai-draft", {
       method: "POST",
@@ -2430,15 +2435,6 @@ async function loadOptions() {
   }
   fillSelect(els.timeRange, options.time_ranges || [], "近一周");
   updateCustomDateRange();
-  fillSelect(
-    els.collectLevel,
-    (options.collect_levels || []).map((value) => ({
-      id: value,
-      name: COLLECT_LEVEL_COPY[value]?.label || value,
-    })),
-    "最小采集",
-  );
-  updateCollectionLimitCopy();
   fillSelect(els.templateSelect, options.templates || [], "event_report");
   renderChecks(els.stableSources, options.stable_sources || [], (options.stable_sources || []).length);
   renderChecks(els.socialPlatforms, options.social_platforms || [], 5);
@@ -2463,6 +2459,8 @@ async function loadOptions() {
 
 async function runCrawl(payload) {
   activateView("task");
+  state.taskId = null;
+  setCrawlRunning(false);
   setBusy(true);
   setStatus("采集中", "busy");
   els.reportDownload.classList.add("hidden");
@@ -2474,6 +2472,7 @@ async function runCrawl(payload) {
       body: JSON.stringify({ ...payload, async: true }),
     });
     state.taskId = result.task_id;
+    setCrawlRunning(true);
     els.taskIdLabel.textContent = result.task_id;
     els.taskNote.textContent = "采集任务已启动";
     setTaskProgress(8);
@@ -2482,7 +2481,27 @@ async function runCrawl(payload) {
   } catch (error) {
     setStatus("采集失败", "error");
     addLog(error.message);
+    setCrawlRunning(false);
     setBusy(false);
+  }
+}
+
+async function cancelCrawl() {
+  if (!state.taskId || !state.crawlRunning || state.crawlCancelPending) return;
+  state.crawlCancelPending = true;
+  setCrawlRunning(true);
+  try {
+    const result = await requestJson("/api/crawl/cancel", {
+      method: "POST",
+      body: JSON.stringify({ task_id: state.taskId }),
+    });
+    setStatus("正在中止", "busy");
+    els.taskNote.textContent = result.message || "正在中止采集；当前请求完成后停止";
+    addLog(result.message || "已申请中止采集");
+  } catch (error) {
+    state.crawlCancelPending = false;
+    setCrawlRunning(true);
+    addLog(`中止请求失败：${error.message}`);
   }
 }
 
@@ -2494,9 +2513,10 @@ function startTaskPolling(taskId) {
     try {
       const result = await requestJson(`/api/task?id=${encodeURIComponent(taskId)}`);
       renderTask(result.task);
-      if (["done", "blocked", "not_met", "error"].includes(result.task.status)) {
+      if (["done", "blocked", "not_met", "cancelled", "error"].includes(result.task.status)) {
         clearInterval(state.taskPoll);
         state.taskPoll = null;
+        setCrawlRunning(false);
         setBusy(false);
         try {
           await refreshAccountStatuses();
@@ -2526,8 +2546,21 @@ function startTaskPolling(taskId) {
           } else {
             renderLatest(result.task.latest);
           }
-          setStatus("验收未通过", "error");
-          addLog(result.task.message || "验收未达到最低结果数");
+          setStatus(isSourceAcceptance ? "验收未通过" : "结果不足", "error");
+          addLog(
+            result.task.message ||
+              (isSourceAcceptance ? "验收未达到最低结果数" : "采集结果未达到目标数量"),
+          );
+        } else if (result.task.status === "cancelled") {
+          if (result.task.latest) {
+            if (isSourceAcceptance) {
+              renderSourceHealth((result.task.latest || {}).meta || {});
+            } else {
+              renderLatest(result.task.latest);
+            }
+          }
+          setStatus("采集已中止");
+          addLog(result.task.message || "采集已中止，已保留现有结果");
         } else {
           setStatus("采集失败", "error");
           addLog(result.task.message || "采集失败");
@@ -2536,6 +2569,7 @@ function startTaskPolling(taskId) {
     } catch (error) {
       clearInterval(state.taskPoll);
       state.taskPoll = null;
+      setCrawlRunning(false);
       setBusy(false);
       setStatus("轮询失败", "error");
       addLog(error.message);
@@ -2549,7 +2583,7 @@ function renderTask(task) {
   const events = task.events || [];
   const sourceStarts = events.filter((event) => event.type === "source_start").length;
   const sourceDone = events.filter((event) => event.type === "source_success" || event.type === "source_failure").length;
-  const terminal = ["done", "blocked", "not_met", "error"].includes(task.status);
+  const terminal = ["done", "blocked", "not_met", "cancelled", "error"].includes(task.status);
   let percent = terminal ? 100 : 8;
   if (sourceStarts) {
     percent = Math.max(8, Math.min(96, Math.round((sourceDone / sourceStarts) * 100)));
@@ -3200,9 +3234,12 @@ els.form.addEventListener("submit", (event) => {
   if (!validateTaskForm()) return;
   runCrawl(collectPayload());
 });
+els.cancelCrawlBtn.addEventListener("click", cancelCrawl);
 
 els.timeRange.addEventListener("change", updateCustomDateRange);
-els.collectLevel.addEventListener("change", updateCollectionLimitCopy);
+els.targetResultCount.addEventListener("input", () => {
+  els.targetResultCount.setCustomValidity("");
+});
 els.templateSelect.addEventListener("change", () => {
   renderReportPreview(null);
   els.reportDownload.classList.add("hidden");

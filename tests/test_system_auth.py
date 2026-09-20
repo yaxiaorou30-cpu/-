@@ -163,15 +163,15 @@ class CrawlTaskOutcomeTests(unittest.TestCase):
         self.assertEqual(status, "not_met")
         self.assertIn("验收未通过", message)
 
-    def test_partial_results_are_not_mislabeled_as_all_sources_blocked(self):
+    def test_partial_results_are_reported_as_result_shortfall(self):
         status, message = web_app.classify_crawl_task({
             "min_real_results": 5,
             "reached_min_real_results": False,
             "summary": {"real_count": 2},
             "failures": [{"policy_code": "robots_disallowed"}],
         })
-        self.assertEqual(status, "done")
-        self.assertIn("未达到最低阈值", message)
+        self.assertEqual(status, "not_met")
+        self.assertEqual(message, "结果不足：实际 2/5")
 
     def test_acceptance_with_real_result_passes(self):
         status, message = web_app.classify_crawl_task({

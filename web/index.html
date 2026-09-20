@@ -204,19 +204,22 @@
                   <summary>
                     <span>
                       <strong>高级设置</strong>
-                      <small>结果总量、结果不足提醒和持续监测</small>
+                      <small>目标采集数量和持续监测</small>
                     </span>
                   </summary>
                   <div class="field-grid advanced-grid">
-                    <label class="field">
-                      <span>整个任务最多保留</span>
-                      <select id="collectLevel"></select>
-                      <small>所有已选来源合计，不是每个平台各自的数量。</small>
-                    </label>
-                    <label class="field">
-                      <span>结果不足提醒线</span>
-                      <input id="minRealResults" type="number" min="1" placeholder="自动" />
-                      <small>少于该数量时提示“结果不足”；已采集内容仍会保留。</small>
+                    <label class="field field-wide">
+                      <span>目标采集数量 *</span>
+                      <input
+                        id="targetResultCount"
+                        type="number"
+                        min="1"
+                        max="5000"
+                        step="1"
+                        value="10"
+                        required
+                      />
+                      <small>所有来源合计达到目标后完成；来源全部尝试后仍不足时，保留已有数据并提示“结果不足 M/N”。</small>
                     </label>
                   </div>
                   <div class="monitor-row">
@@ -235,6 +238,7 @@
 
                 <div class="form-actions">
                   <button class="primary-btn" id="crawlBtn" type="submit">开始采集</button>
+                  <button class="danger-btn" id="cancelCrawlBtn" type="button" disabled>中止采集</button>
                 </div>
               </form>
 
@@ -284,10 +288,6 @@
                   <div>
                     <span class="section-kicker">逐项核对</span>
                     <h3>采集检查清单</h3>
-                  </div>
-                  <div class="heat-readout">
-                    <span>热度指数</span>
-                    <strong id="heatIndex">0</strong>
                   </div>
                 </div>
                 <p class="quality-note" id="qualityNote">暂无采集数据</p>
@@ -751,7 +751,7 @@
               </p>
               <label class="ai-confirmation">
                 <input id="aiExternalSendConfirm" type="checkbox" />
-                <span>我确认已按甲方内部规则完成本次数据审核并获得授权，同意将上方所列字段发送至所示第三方 AI 服务；本次仅发起一次请求。</span>
+                <span>我确认已按甲方内部规则完成本次数据审核并获得授权，同意将上方所列字段按所示批次向第三方 AI 发起多次请求，并由模型继续合并和生成报告。</span>
               </label>
               <div class="ai-actions">
                 <button class="secondary-btn" id="aiGenerateBtn" type="button" disabled>

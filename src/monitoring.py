@@ -17,6 +17,8 @@ from apscheduler.events import EVENT_JOB_MISSED
 from apscheduler.executors.pool import ThreadPoolExecutor as APSchedulerThreadPoolExecutor
 from apscheduler.schedulers.background import BackgroundScheduler
 
+from src.collection_target import normalize_collection_target
+
 
 SUPPORTED_INTERVALS = (15, 30, 60)
 MAX_ACTIVE_PLANS = 5
@@ -70,7 +72,16 @@ def normalize_monitor_payload(payload: dict) -> dict:
     else:
         keywords = _text_list(raw_keywords)
 
-    min_real_results = payload.get("min_real_results")
+    max_results = payload.get("max_results")
+    if max_results not in (None, ""):
+        normalized_target = normalize_collection_target(payload)
+        max_results = normalized_target["max_results"]
+        min_real_results = normalized_target["min_real_results"]
+        collect_level = normalized_target["collect_level"]
+    else:
+        max_results = None
+        min_real_results = payload.get("min_real_results")
+        collect_level = str(payload.get("collect_level") or "最小采集").strip()
     try:
         min_real_results = (
             int(min_real_results) if min_real_results not in (None, "") else None
@@ -83,12 +94,13 @@ def normalize_monitor_payload(payload: dict) -> dict:
         "keywords": keywords,
         "region": str(payload.get("region") or "").strip() or "全国",
         "source_strategy": str(payload.get("source_strategy") or "all").strip(),
-        "collect_level": str(payload.get("collect_level") or "最小采集").strip(),
+        "collect_level": collect_level,
         "time_range": str(payload.get("time_range") or "近一周").strip(),
         "stable_sources": _text_list(payload.get("stable_sources")),
         "social_platforms": _text_list(payload.get("social_platforms")),
         "use_system_proxy": bool(payload.get("use_system_proxy", False)),
         "enable_debug_snapshots": bool(payload.get("enable_debug_snapshots", False)),
+        "max_results": max_results,
         "min_real_results": min_real_results,
     }
 

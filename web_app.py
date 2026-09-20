@@ -34,6 +34,7 @@ from src.crawler import (
     crawl_and_save,
 )
 from src.ai_confirmation import AiConfirmationError, OneShotAiConfirmationStore
+from src.collection_target import normalize_collection_target, parse_target_result_count
 from src.deepseek_report import (
     DeepSeekReportClient,
     DeepSeekReportError,
@@ -161,10 +162,38 @@ def read_json(path: Path, default):
         return json.load(f)
 
 
-def crawl_and_save_serialized(**kwargs):
+class CrawlCancelledBeforeStart(Exception):
+    """The task was cancelled while waiting for the single crawler slot."""
+
+
+def crawl_and_save_serialized(*, cancel_callback=None, **kwargs):
     """社交平台浏览器会话不能并行使用；一次只运行一个采集作业。"""
-    with CRAWL_EXECUTION_LOCK:
-        return crawl_and_save(**kwargs)
+    while not CRAWL_EXECUTION_LOCK.acquire(timeout=0.2):
+        if cancel_callback and cancel_callback():
+            raise CrawlCancelledBeforeStart()
+    try:
+        if cancel_callback and cancel_callback():
+            raise CrawlCancelledBeforeStart()
+        return crawl_and_save(cancel_callback=cancel_callback, **kwargs)
+    finally:
+        CRAWL_EXECUTION_LOCK.release()
+
+
+def request_crawl_cancel(task_id: str) -> dict:
+    task_id = str(task_id or "").strip()
+    if not task_id:
+        raise ValueError("缺少采集任务编号")
+    with TASK_LOCK:
+        task = TASKS.get(task_id)
+        if not task:
+            raise FileNotFoundError("采集任务不存在")
+        if task.get("status") not in {"queued", "running"}:
+            raise ValueError("采集任务已经结束，不能中止")
+        if task.get("cancel_requested"):
+            raise ValueError("已经申请中止，请等待当前请求结束")
+        task["cancel_requested"] = True
+        task["message"] = "正在中止采集；当前请求完成后停止"
+        return dict(task)
 
 
 class _DataBlob(ctypes.Structure):
@@ -708,6 +737,15 @@ def account_clear_target(payload: dict) -> dict:
 
 
 def task_payload_summary(payload):
+    max_results = payload.get("max_results")
+    try:
+        max_results = (
+            parse_target_result_count(max_results)
+            if max_results not in (None, "")
+            else None
+        )
+    except ValueError:
+        max_results = None
     min_real_results = payload.get("min_real_results")
     try:
         min_real_results = int(min_real_results) if min_real_results not in (None, "") else None
@@ -724,6 +762,7 @@ def task_payload_summary(payload):
         "social_platforms": payload.get("social_platforms") or [],
         "use_system_proxy": bool(payload.get("use_system_proxy", False)),
         "enable_debug_snapshots": bool(payload.get("enable_debug_snapshots", False)),
+        "max_results": max_results,
         "min_real_results": min_real_results,
         "source_acceptance": bool(payload.get("source_acceptance", False)),
         "account_platforms": sorted(list((payload.get("accounts") or {}).keys())),
@@ -750,6 +789,15 @@ def sanitize_task_history_entry(entry):
         min_real_results = int(min_real_results) if min_real_results not in (None, "") else None
     except (TypeError, ValueError):
         min_real_results = None
+    max_results = raw_payload.get("max_results")
+    try:
+        max_results = (
+            parse_target_result_count(max_results)
+            if max_results not in (None, "")
+            else None
+        )
+    except ValueError:
+        max_results = None
 
     safe_summary = {}
     for key in HISTORY_SUMMARY_FIELDS:
@@ -775,6 +823,7 @@ def sanitize_task_history_entry(entry):
             "social_platforms": text_list(raw_payload.get("social_platforms")),
             "use_system_proxy": bool(raw_payload.get("use_system_proxy", False)),
             "enable_debug_snapshots": bool(raw_payload.get("enable_debug_snapshots", False)),
+            "max_results": max_results,
             "min_real_results": min_real_results,
         },
     }
@@ -933,6 +982,7 @@ def ensure_current_history_archive() -> str:
                 "social_platforms": meta.get("social_platforms") or [],
                 "use_system_proxy": bool(meta.get("use_system_proxy", False)),
                 "enable_debug_snapshots": False,
+                "max_results": meta.get("target_results"),
                 "min_real_results": meta.get("min_real_results"),
             },
         }
@@ -1032,10 +1082,14 @@ def classify_crawl_task(meta: dict, source_acceptance: bool = False):
         return "blocked", "所有已选来源均被访问策略阻止"
     if source_acceptance:
         return "not_met", f"稳定源验收未通过：真实记录 {real_count}/{minimum}"
-    return "done", f"采集完成，但真实记录 {real_count}/{minimum}，未达到最低阈值"
+    return "not_met", f"结果不足：实际 {real_count}/{minimum}"
 
 
 def run_crawl_job(task_id: str, payload: dict):
+    def should_cancel():
+        with TASK_LOCK:
+            return bool(TASKS.get(task_id, {}).get("cancel_requested"))
+
     def emit(event):
         with TASK_LOCK:
             task = TASKS.get(task_id)
@@ -1052,9 +1106,15 @@ def run_crawl_job(task_id: str, payload: dict):
     with TASK_LOCK:
         TASKS[task_id]["status"] = "running"
         TASKS[task_id]["started_at"] = datetime.now().isoformat()
-        TASKS[task_id]["message"] = "采集中"
+        TASKS[task_id]["message"] = (
+            "正在中止采集；当前请求完成后停止"
+            if TASKS[task_id].get("cancel_requested")
+            else "采集中"
+        )
 
     try:
+        if payload.get("max_results") not in (None, ""):
+            payload = normalize_collection_target(payload)
         keywords = parse_keywords(payload.get("keywords")) or ["警方通报", "案件通报", "突发事件"]
         source_acceptance = bool(payload.get("source_acceptance", False))
         social_platforms = [] if source_acceptance else payload.get("social_platforms")
@@ -1092,6 +1152,7 @@ def run_crawl_job(task_id: str, payload: dict):
             source_strategy=payload.get("source_strategy") or "all",
             min_real_results=min_real_results,
             progress_callback=emit,
+            cancel_callback=should_cancel,
             use_system_proxy=bool(payload.get("use_system_proxy", False)),
             enable_debug_snapshots=bool(payload.get("enable_debug_snapshots", False)),
             use_external_social_adapters=not source_acceptance,
@@ -1115,7 +1176,13 @@ def run_crawl_job(task_id: str, payload: dict):
             }) or {}).get("payload", {})
             write_json_atomic(meta_file, generated_meta)
         latest = build_latest_payload(output_file, meta_file)
-        task_status, task_message = classify_crawl_task(latest.get("meta", {}), source_acceptance)
+        latest_meta = latest.get("meta", {})
+        if latest_meta.get("cancelled") or should_cancel():
+            real_count = int((latest_meta.get("summary") or {}).get("real_count") or 0)
+            task_status = "cancelled"
+            task_message = f"采集已中止，已保留 {real_count} 条结果"
+        else:
+            task_status, task_message = classify_crawl_task(latest_meta, source_acceptance)
         with TASK_LOCK:
             task = TASKS[task_id]
             task["status"] = task_status
@@ -1133,6 +1200,25 @@ def run_crawl_job(task_id: str, payload: dict):
         }
         append_task_history(history_entry)
         manifest = archive_task_snapshot(task_id, history_entry, output_file, meta_file)
+        upsert_history_manifest(manifest)
+    except CrawlCancelledBeforeStart:
+        completed_at = datetime.now().isoformat()
+        with TASK_LOCK:
+            task = TASKS.get(task_id)
+            if task:
+                task["status"] = "cancelled"
+                task["message"] = "采集已中止，尚未开始请求来源"
+                task["completed_at"] = completed_at
+        history_entry = {
+            "task_id": task_id,
+            "status": "cancelled",
+            "created_at": TASKS.get(task_id, {}).get("created_at", ""),
+            "completed_at": completed_at,
+            "message": "采集已中止，尚未开始请求来源",
+            "payload": task_payload_summary(payload),
+        }
+        append_task_history(history_entry)
+        manifest = HISTORY_ARCHIVE_STORE.archive_task(task_id, history_entry=history_entry)
         upsert_history_manifest(manifest)
     except Exception as exc:
         with TASK_LOCK:
@@ -1167,10 +1253,14 @@ def run_monitor_crawl(
         "突发事件",
     ]
     min_real_results = payload.get("min_real_results")
+    max_results = payload.get("max_results")
     if isinstance(min_real_results, str) and min_real_results.strip():
         min_real_results = int(min_real_results)
     elif min_real_results in ("", None):
         min_real_results = None
+    if max_results not in (None, ""):
+        max_results = parse_target_result_count(max_results)
+        min_real_results = max_results
 
     output_file.parent.mkdir(parents=True, exist_ok=True)
     crawl_and_save(
@@ -1180,6 +1270,7 @@ def run_monitor_crawl(
         meta_path=str(meta_file),
         social_platforms=payload.get("social_platforms") or [],
         stable_sources=payload.get("stable_sources") or [],
+        max_results=max_results,
         region=str(payload.get("region") or "").strip() or None,
         time_range=payload.get("time_range") or "近一周",
         collect_level=payload.get("collect_level") or "最小采集",
@@ -1567,6 +1658,9 @@ class WebUIHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/api/crawl":
             self.handle_crawl()
+            return
+        if parsed.path == "/api/crawl/cancel":
+            self.handle_crawl_cancel()
             return
         if parsed.path == "/api/monitors/create":
             self.handle_monitor_create()
@@ -1993,7 +2087,7 @@ class WebUIHandler(BaseHTTPRequestHandler):
 
     def handle_crawl(self):
         try:
-            payload = self.read_body_json()
+            payload = normalize_collection_target(self.read_body_json())
             if payload.get("async", True):
                 task_id = uuid.uuid4().hex[:12]
                 with TASK_LOCK:
@@ -2003,6 +2097,7 @@ class WebUIHandler(BaseHTTPRequestHandler):
                         "message": "任务已创建",
                         "created_at": datetime.now().isoformat(),
                         "events": [],
+                        "cancel_requested": False,
                         "payload": task_payload_summary(payload),
                     }
                 thread = threading.Thread(target=run_crawl_job, args=(task_id, payload), daemon=True)
@@ -2018,6 +2113,7 @@ class WebUIHandler(BaseHTTPRequestHandler):
                     "message": "任务已创建",
                     "created_at": datetime.now().isoformat(),
                     "events": [],
+                    "cancel_requested": False,
                     "payload": task_payload_summary(payload),
                 }
             run_crawl_job(task_id, payload)
@@ -2027,6 +2123,20 @@ class WebUIHandler(BaseHTTPRequestHandler):
                 self.send_json({"ok": False, "task": task, "message": task.get("message", "采集失败")}, status=500)
             else:
                 self.send_json({"ok": True, "task_id": task_id, "task": task, "latest": task.get("latest")})
+        except ValueError as exc:
+            self.send_json({"ok": False, "message": str(exc)}, status=400)
+        except Exception as exc:
+            self.send_json({"ok": False, "message": str(exc)}, status=500)
+
+    def handle_crawl_cancel(self):
+        try:
+            payload = self.read_body_json(max_bytes=16 * 1024)
+            task = request_crawl_cancel(payload.get("task_id"))
+            self.send_json({"ok": True, "message": task["message"], "task": task})
+        except FileNotFoundError as exc:
+            self.send_json({"ok": False, "message": str(exc)}, status=404)
+        except ValueError as exc:
+            self.send_json({"ok": False, "message": str(exc)}, status=409)
         except Exception as exc:
             self.send_json({"ok": False, "message": str(exc)}, status=500)
 
@@ -2580,7 +2690,7 @@ class WebUIHandler(BaseHTTPRequestHandler):
             self.send_json({
                 "ok": True,
                 "message": (
-                    "DeepSeek 分析草稿已生成；尚未采用到报告，"
+                    "DeepSeek 已完成全部数据批次分析与综合；尚未采用到报告，"
                     "请人工核对并明确采用"
                 ),
                 "draft": draft,
