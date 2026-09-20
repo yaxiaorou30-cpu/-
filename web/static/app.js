@@ -2220,12 +2220,8 @@ function applyAiDraftToPreview() {
   }
   const aiSections = {};
   els.aiDraftEditor.querySelectorAll("[data-ai-section]").forEach((editor) => {
-    aiSections[editor.dataset.aiSection] = editor.value.trim();
+    aiSections[editor.dataset.aiSection] = editor.value;
   });
-  if (Object.values(aiSections).some((value) => !value)) {
-    els.aiDraftStatus.textContent = "AI 草稿章节不能为空；请补充或舍弃后再采用。";
-    return;
-  }
 
   const reportEditors = new Map(
     [...els.reportPreview.querySelectorAll(".report-section-editor")]

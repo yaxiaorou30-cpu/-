@@ -262,6 +262,20 @@ class DeepSeekReportTests(unittest.TestCase):
         self.assertNotIn("temperature", payload)
         self.assertFalse(payload["stream"])
 
+    def test_prompt_only_requires_the_json_interface_not_citations_or_paragraph_format(self):
+        payload, _ = build_deepseek_request(
+            [self.public_record, self.login_record],
+            self.preview,
+        )
+
+        prompt = "\n".join(message["content"] for message in payload["messages"])
+        self.assertEqual(deepseek_report_module.PROMPT_VERSION, "reviewed-report-v5")
+        self.assertIn("必须输出以下 JSON 结构", prompt)
+        self.assertNotIn("每章仅写一个连续段落", prompt)
+        self.assertNotIn("每个章节必须至少包含一个有效[S编号]", prompt)
+        self.assertNotIn("至少引用两个不同编号", prompt)
+        self.assertNotIn("不得用同一内容重复填充", prompt)
+
     def test_default_budget_loads_all_twelve_catalog_evidence_and_discloses_estimate(self):
         records = self.reviewed_records(12)
         payload, scope = build_deepseek_request(
@@ -744,27 +758,23 @@ class DeepSeekReportTests(unittest.TestCase):
                 self.assertIn(message, str(caught.exception))
                 self.assertNotIn("deepseek-key-secret", str(caught.exception))
 
-    def test_invalid_json_unknown_reference_and_missing_reference_are_rejected(self):
+    def test_invalid_json_is_rejected_but_model_section_text_is_preserved(self):
         with self.assertRaisesRegex(DeepSeekReportError, "不是有效 JSON"):
             validate_ai_report_output("not-json", {"S1"})
 
-        unknown = self.valid_sections()
-        unknown["analysis"] = "错误引用。[S999]"
-        with self.assertRaisesRegex(DeepSeekReportError, "未知证据编号"):
-            validate_ai_report_output(
-                json.dumps({"sections": unknown}, ensure_ascii=False),
-                {"S1"},
-            )
+        sections = self.valid_sections()
+        sections["analysis"] = "模型给出的未知引用。[S999]"
+        sections["risks"] = "第一段没有引用。\n- 第二项也没有引用。"
+        sections["recommendations"] = ""
 
-        missing = self.valid_sections()
-        missing["risks"] = "这一段没有证据引用。"
-        with self.assertRaisesRegex(DeepSeekReportError, "缺少有效证据引用"):
-            validate_ai_report_output(
-                json.dumps({"sections": missing}, ensure_ascii=False),
-                {"S1"},
-            )
+        validated = validate_ai_report_output(
+            json.dumps({"sections": sections}, ensure_ascii=False),
+            {"S1"},
+        )
 
-    def test_section_over_4000_chars_is_not_rejected_when_quality_rules_pass(self):
+        self.assertEqual(validated, sections)
+
+    def test_section_over_4000_chars_is_preserved(self):
         long_sections = self.valid_sections()
         long_sections["summary"] = "完整证据内容" * 900 + "[S1]"
 
@@ -775,39 +785,42 @@ class DeepSeekReportTests(unittest.TestCase):
 
         self.assertEqual(validated["summary"], long_sections["summary"])
 
-    def test_every_nonempty_paragraph_or_list_line_requires_a_valid_reference(self):
-        invalid_lines = (
+    def test_multiline_and_list_sections_are_preserved_without_reference_validation(self):
+        model_values = (
             "第一段已有引用。[S1]\n\n第二段没有引用。",
             "- 风险一已有引用。[S1]\n- 风险二没有引用。",
         )
-        for invalid_value in invalid_lines:
-            with self.subTest(invalid_value=invalid_value):
+        for model_value in model_values:
+            with self.subTest(model_value=model_value):
                 sections = self.valid_sections()
-                sections["risks"] = invalid_value
-                with self.assertRaisesRegex(DeepSeekReportError, "非空.*有效证据引用"):
-                    validate_ai_report_output(
-                        json.dumps({"sections": sections}, ensure_ascii=False),
-                        {"S1"},
-                    )
+                sections["risks"] = model_value
+                validated = validate_ai_report_output(
+                    json.dumps({"sections": sections}, ensure_ascii=False),
+                    {"S1"},
+                )
+                self.assertEqual(validated["risks"], model_value)
 
-    def test_section_with_only_reference_and_punctuation_is_rejected(self):
+    def test_section_with_only_reference_and_punctuation_is_preserved(self):
         sections = self.valid_sections()
         sections["summary"] = "……[S1]"
 
-        with self.assertRaisesRegex(DeepSeekReportError, "缺少实质内容"):
-            validate_ai_report_output(
-                json.dumps({"sections": sections}, ensure_ascii=False),
-                {"S1"},
-            )
+        validated = validate_ai_report_output(
+            json.dumps({"sections": sections}, ensure_ascii=False),
+            {"S1"},
+        )
 
-    def test_report_uses_at_least_two_distinct_references_when_available(self):
-        with self.assertRaisesRegex(DeepSeekReportError, "至少引用 2 个不同证据"):
-            validate_ai_report_output(
-                json.dumps({"sections": self.valid_sections()}, ensure_ascii=False),
-                {"S1", "S2"},
-            )
+        self.assertEqual(validated["summary"], "……[S1]")
 
-    def test_all_four_sections_cannot_repeat_after_references_and_whitespace_are_removed(self):
+    def test_report_does_not_require_multiple_distinct_references(self):
+        sections = self.valid_sections()
+        validated = validate_ai_report_output(
+            json.dumps({"sections": sections}, ensure_ascii=False),
+            {"S1", "S2"},
+        )
+
+        self.assertEqual(validated, sections)
+
+    def test_all_four_sections_may_repeat(self):
         repeated_sections = {
             "summary": "完全相同的报告内容。[S1]",
             "analysis": " 完全相同的报告内容。 [S2]",
@@ -815,21 +828,23 @@ class DeepSeekReportTests(unittest.TestCase):
             "recommendations": "完全相同的报告内容。[S2]",
         }
 
-        with self.assertRaisesRegex(DeepSeekReportError, "四个章节.*重复"):
-            validate_ai_report_output(
-                json.dumps({"sections": repeated_sections}, ensure_ascii=False),
-                {"S1", "S2"},
-            )
+        validated = validate_ai_report_output(
+            json.dumps({"sections": repeated_sections}, ensure_ascii=False),
+            {"S1", "S2"},
+        )
 
-    def test_any_two_sections_cannot_repeat_after_references_and_whitespace_are_removed(self):
+        self.assertEqual(validated, repeated_sections)
+
+    def test_any_two_sections_may_repeat(self):
         repeated_sections = self.valid_sections_with_two_evidence()
         repeated_sections["risks"] = "公开材料显示事件仍在处置中，后续信息以权威发布为准。 [S2]"
 
-        with self.assertRaisesRegex(DeepSeekReportError, "章节.*重复"):
-            validate_ai_report_output(
-                json.dumps({"sections": repeated_sections}, ensure_ascii=False),
-                {"S1", "S2"},
-            )
+        validated = validate_ai_report_output(
+            json.dumps({"sections": repeated_sections}, ensure_ascii=False),
+            {"S1", "S2"},
+        )
+
+        self.assertEqual(validated, repeated_sections)
 
     def test_truncated_or_empty_model_response_is_rejected(self):
         for finish_reason, content, message in (
@@ -1242,6 +1257,15 @@ class DeepSeekReportUiContractTests(unittest.TestCase):
         generate_body = self.javascript[generate_start:apply_start]
         self.assertNotIn(".report-section-editor", generate_body)
         self.assertIn(".report-section-editor", self.javascript[apply_start:])
+
+    def test_ai_draft_can_be_applied_without_content_quality_or_empty_section_rules(self):
+        apply_start = self.javascript.index("function applyAiDraftToPreview()")
+        discard_start = self.javascript.index("function discardAiReportDraft()")
+        apply_body = self.javascript[apply_start:discard_start]
+
+        self.assertIn("editor.value;", apply_body)
+        self.assertNotIn("editor.value.trim()", apply_body)
+        self.assertNotIn("AI 草稿章节不能为空", apply_body)
 
 
 if __name__ == "__main__":
