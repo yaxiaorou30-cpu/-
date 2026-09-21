@@ -9,6 +9,7 @@ const els = {
   startDate: document.getElementById("startDate"),
   endDate: document.getElementById("endDate"),
   stableSources: document.getElementById("stableSources"),
+  publicNewsSources: document.getElementById("publicNewsSources"),
   socialPlatforms: document.getElementById("socialPlatforms"),
   siteSessionCard: document.getElementById("siteSessionCard"),
   siteLoginUrl: document.getElementById("siteLoginUrl"),
@@ -152,6 +153,8 @@ const state = {
   latest: null,
   taskId: null,
   taskPoll: null,
+  taskPollFailures: 0,
+  taskPollVersion: 0,
   crawlRunning: false,
   crawlCancelPending: false,
   monitorPlans: [],
@@ -481,7 +484,11 @@ function renderChecks(container, values, checkedCount) {
       updateSelectButtons();
       updateSourceSummary();
       if (state.options) {
-        const groupName = container === els.stableSources ? "政府官网" : "社交平台";
+        const groupName = container === els.stableSources
+          ? "政府官网"
+          : container === els.publicNewsSources
+            ? "公开网页/新闻"
+            : "社交平台";
         addSourceLog(`${groupName}已更新：当前选择 ${checkedValues(container).length} 个来源`, "info");
       }
     });
@@ -768,14 +775,14 @@ function updateSelectButtons() {
 }
 
 function updateSourceSummary() {
-  if (!els.selectedSourceSummary || !els.stableSources || !els.socialPlatforms) return;
+  if (!els.selectedSourceSummary || !els.stableSources || !els.publicNewsSources || !els.socialPlatforms) return;
   const stable = checkedValues(els.stableSources);
+  const publicNews = checkedValues(els.publicNewsSources);
   const social = checkedValues(els.socialPlatforms);
-  const publicNews = state.options?.public_news_sources?.length || 0;
   const strategy = selectedStrategy();
   const parts = [];
   if (strategy === "all" || strategy === "stable") parts.push(`政府官网 ${stable.length} 个`);
-  if (strategy === "all" || strategy === "public_news") parts.push(`公开网页/新闻 ${publicNews} 个`);
+  if (strategy === "all" || strategy === "public_news") parts.push(`公开网页/新闻 ${publicNews.length} 个`);
   if (strategy === "all" || strategy === "social") parts.push(`社交平台 ${social.length} 个`);
   els.selectedSourceSummary.textContent = parts.join(" · ") || "尚未选择采集来源";
 }
@@ -840,6 +847,8 @@ function selectedTimeRange() {
 function validateTaskForm() {
   els.endDate.setCustomValidity("");
   els.targetResultCount.setCustomValidity("");
+  const publicNewsInputs = [...els.publicNewsSources.querySelectorAll("input")];
+  publicNewsInputs.forEach((input) => input.setCustomValidity(""));
   if (
     els.timeRange.value === "自定义" &&
     els.startDate.value &&
@@ -851,6 +860,9 @@ function validateTaskForm() {
   const target = Number(els.targetResultCount.value);
   if (!Number.isInteger(target) || target < 1 || target > 5000) {
     els.targetResultCount.setCustomValidity("请输入 1–5000 的整数");
+  }
+  if (selectedStrategy() === "public_news" && checkedValues(els.publicNewsSources).length === 0) {
+    publicNewsInputs[0]?.setCustomValidity("请至少选择 Bing 或百度中的一个来源");
   }
   return els.form.reportValidity();
 }
@@ -865,6 +877,7 @@ function collectPayload(overrides = {}) {
     collect_level: collectionLevelForTarget(targetResultCount),
     source_strategy: selectedStrategy(),
     stable_sources: checkedValues(els.stableSources),
+    public_news_sources: checkedValues(els.publicNewsSources),
     social_platforms: checkedValues(els.socialPlatforms),
     accounts: collectAccounts(),
     use_system_proxy: els.useSystemProxy.checked,
@@ -1551,7 +1564,9 @@ function renderEvents(events = []) {
   }
   events.slice(-8).reverse().forEach((event) => {
     const node = document.createElement("div");
-    node.className = `compact-item ${event.type === "source_failure" ? "failed" : event.type === "source_success" ? "ok" : ""}`;
+    const failed = ["source_failure", "crawl_failure", "ai_failure"].includes(event.type);
+    const succeeded = ["source_success", "ai_complete"].includes(event.type);
+    node.className = `compact-item ${failed ? "failed" : succeeded ? "ok" : ""}`;
     const diagnostic = event.debug_snapshot
       ? ` · 诊断：${event.debug_snapshot}（清除该平台授权可一并删除）`
       : "";
@@ -2149,7 +2164,7 @@ function renderAiAssistance(disclosure) {
   } else if (!disclosure.evidence_count) {
     els.aiDraftStatus.textContent = "当前范围没有可装入本次预算的已审核证据；未审核数据不会发送。";
   } else {
-    els.aiDraftStatus.textContent = "请按甲方内部规则核对范围并勾选确认，随后才会发起一次收费请求。";
+    els.aiDraftStatus.textContent = "请按甲方内部规则核对范围并勾选确认，随后将按上方所示批次发起多次调用。";
   }
   updateAiGenerateAvailability();
 }
@@ -2184,6 +2199,8 @@ async function generateAiReportDraft() {
   }
 
   state.aiRequestPending = true;
+  const aiTaskId = state.latest?.meta?.task_id || state.taskId;
+  if (aiTaskId) startTaskPolling(aiTaskId, { aiOnly: true });
   delete state.aiDisclosure.confirmation_id;
   els.aiGenerateBtn.disabled = true;
   els.aiExternalSendConfirm.checked = false;
@@ -2437,6 +2454,7 @@ async function loadOptions() {
   updateCustomDateRange();
   fillSelect(els.templateSelect, options.templates || [], "event_report");
   renderChecks(els.stableSources, options.stable_sources || [], (options.stable_sources || []).length);
+  renderChecks(els.publicNewsSources, options.public_news_sources || [], (options.public_news_sources || []).length);
   renderChecks(els.socialPlatforms, options.social_platforms || [], 5);
   renderAccounts(options.social_platforms || [], state.savedAccounts);
   renderSiteSessionStatus();
@@ -2505,17 +2523,43 @@ async function cancelCrawl() {
   }
 }
 
-function startTaskPolling(taskId) {
+function startTaskPolling(taskId, { aiOnly = false } = {}) {
   if (state.taskPoll) {
-    clearInterval(state.taskPoll);
+    clearTimeout(state.taskPoll);
   }
+  const pollVersion = ++state.taskPollVersion;
+  state.taskPollFailures = 0;
+
+  const stopPolling = () => {
+    if (state.taskPollVersion !== pollVersion) return;
+    if (state.taskPoll) clearTimeout(state.taskPoll);
+    state.taskPoll = null;
+    state.taskPollFailures = 0;
+    state.taskPollVersion += 1;
+  };
+
+  const schedule = (delay) => {
+    if (state.taskPollVersion !== pollVersion) return;
+    state.taskPoll = setTimeout(tick, delay);
+  };
+
   const tick = async () => {
+    if (state.taskPollVersion !== pollVersion) return;
+    state.taskPoll = null;
     try {
       const result = await requestJson(`/api/task?id=${encodeURIComponent(taskId)}`);
+      if (state.taskPollVersion !== pollVersion) return;
+      const recovered = state.taskPollFailures > 0;
+      state.taskPollFailures = 0;
       renderTask(result.task);
-      if (["done", "blocked", "not_met", "cancelled", "error"].includes(result.task.status)) {
-        clearInterval(state.taskPoll);
-        state.taskPoll = null;
+      if (recovered) {
+        if (!aiOnly) setStatus(state.crawlCancelPending ? "正在中止" : "采集中", "busy");
+        addLog(aiOnly ? "DeepSeek 任务事件连接已恢复" : "任务状态连接已恢复");
+      }
+      const terminal = ["done", "blocked", "not_met", "cancelled", "error"].includes(result.task.status);
+      if (terminal && (!aiOnly || !state.aiRequestPending)) {
+        stopPolling();
+        if (aiOnly) return;
         setCrawlRunning(false);
         setBusy(false);
         try {
@@ -2565,18 +2609,24 @@ function startTaskPolling(taskId) {
           setStatus("采集失败", "error");
           addLog(result.task.message || "采集失败");
         }
+        return;
       }
+      schedule(1200);
     } catch (error) {
-      clearInterval(state.taskPoll);
-      state.taskPoll = null;
-      setCrawlRunning(false);
-      setBusy(false);
-      setStatus("轮询失败", "error");
-      addLog(error.message);
+      if (state.taskPollVersion !== pollVersion) return;
+      state.taskPollFailures += 1;
+      const delay = Math.min(5000, 1200 * (2 ** state.taskPollFailures));
+      if (!aiOnly) {
+        setStatus("状态连接暂时不稳定，正在自动重试", "busy");
+        els.taskNote.textContent = `状态连接暂时不稳定，正在自动重试（第 ${state.taskPollFailures} 次）`;
+      }
+      if (state.taskPollFailures === 1) {
+        addLog(`${aiOnly ? "DeepSeek 任务事件" : "任务状态"}刷新失败，正在自动重试：${error.message}`);
+      }
+      schedule(delay);
     }
   };
   tick();
-  state.taskPoll = setInterval(tick, 1200);
 }
 
 function renderTask(task) {
@@ -2590,7 +2640,15 @@ function renderTask(task) {
   }
   setTaskProgress(percent);
   els.taskIdLabel.textContent = task.task_id || "无任务";
-  els.taskNote.textContent = task.message || task.last_event || "任务运行中";
+  const currentMessage = task.cancel_requested
+    ? task.message || task.last_event || "正在中止采集"
+    : task.last_event || task.message || "任务运行中";
+  const updatedAt = Date.parse(task.updated_at || task.started_at || task.created_at || "");
+  const elapsedSeconds = Number.isNaN(updatedAt)
+    ? 0
+    : Math.max(0, Math.floor((Date.now() - updatedAt) / 1000));
+  const elapsedText = !terminal && elapsedSeconds >= 2 ? ` · 已持续 ${elapsedSeconds} 秒` : "";
+  els.taskNote.textContent = terminal ? task.message || currentMessage : `${currentMessage}${elapsedText}`;
   renderEvents(events);
 }
 
@@ -2924,7 +2982,7 @@ function monitorMetaText(plan = {}) {
     : (payload.source_strategy || "all");
   const sourceCount =
     ((strategy === "all" || strategy === "stable") ? (payload.stable_sources || []).length : 0)
-    + ((strategy === "all" || strategy === "public_news") ? 1 : 0)
+    + ((strategy === "all" || strategy === "public_news") ? (payload.public_news_sources || []).length : 0)
     + ((strategy === "all" || strategy === "social") ? (payload.social_platforms || []).length : 0);
   return `每 ${plan.interval_minutes || "-"} 分钟 · ${sourceCount} 个来源 · 累计新增 ${plan.total_new || 0} 条`;
 }
@@ -3157,7 +3215,7 @@ function renderMonitorDetail(plan) {
   const payload = plan.payload || {};
   const conditions = document.createElement("p");
   conditions.className = "monitor-conditions";
-  conditions.textContent = `关键词：${(payload.keywords || []).join("、") || "未填写"}；范围：${payload.time_range || "-"}；来源：${[...(payload.stable_sources || []), ...(payload.social_platforms || [])].join("、") || "未选择"}`;
+  conditions.textContent = `关键词：${(payload.keywords || []).join("、") || "未填写"}；范围：${payload.time_range || "-"}；来源：${[...(payload.stable_sources || []), ...(payload.public_news_sources || []), ...(payload.social_platforms || [])].join("、") || "未选择"}`;
   els.monitorDetail.appendChild(conditions);
   renderMonitorClues(els.monitorDetail, plan.new_items || []);
   renderMonitorRuns(els.monitorDetail, plan.runs || []);

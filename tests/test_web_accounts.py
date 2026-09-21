@@ -68,6 +68,16 @@ class WebAccountStoreTests(unittest.TestCase):
         self.assertIn('els.globalMiniProgressBar.style.width = `${normalized}%`;', javascript)
         self.assertIn('els.globalOperationsToggle.addEventListener("click"', javascript)
 
+    def test_task_polling_is_serial_and_recovers_from_transient_failures(self):
+        javascript = (web_app.WEB_DIR / "static" / "app.js").read_text(encoding="utf-8")
+
+        self.assertNotIn("setInterval(tick, 1200)", javascript)
+        self.assertIn("setTimeout(tick, delay)", javascript)
+        self.assertIn("taskPollFailures: 0", javascript)
+        self.assertIn("状态连接暂时不稳定，正在自动重试", javascript)
+        self.assertIn("task.last_event || task.message", javascript)
+        self.assertIn("已持续", javascript)
+
     def test_platform_test_ui_requires_login_and_collection(self):
         html = (web_app.WEB_DIR / "index.html").read_text(encoding="utf-8")
         javascript = (web_app.WEB_DIR / "static" / "app.js").read_text(encoding="utf-8")
@@ -179,10 +189,47 @@ class WebAccountStoreTests(unittest.TestCase):
         )
         html = (web_app.WEB_DIR / "index.html").read_text(encoding="utf-8")
         javascript = (web_app.WEB_DIR / "static" / "app.js").read_text(encoding="utf-8")
+        self.assertIn('id="publicNewsSources"', html)
         self.assertIn('id="publicNewsCount"', html)
         self.assertIn("公开网页/新闻", html)
         self.assertIn("百度网页搜索", html)
+        self.assertIn("renderChecks(els.publicNewsSources", javascript)
+        self.assertIn("public_news_sources: checkedValues(els.publicNewsSources)", javascript)
         self.assertIn("summary.public_news_real_count", javascript)
+
+    def test_public_news_selection_defaults_filters_and_rejects_invalid_input(self):
+        available = ["Bing News RSS", "百度网页搜索"]
+
+        self.assertEqual(
+            web_app.normalize_public_news_selection({"source_strategy": "all"})[
+                "public_news_sources"
+            ],
+            available,
+        )
+        self.assertEqual(
+            web_app.normalize_public_news_selection({
+                "source_strategy": "all",
+                "public_news_sources": ["百度网页搜索"],
+            })["public_news_sources"],
+            ["百度网页搜索"],
+        )
+        self.assertEqual(
+            web_app.normalize_public_news_selection({
+                "source_strategy": "all",
+                "public_news_sources": [],
+            })["public_news_sources"],
+            [],
+        )
+        with self.assertRaisesRegex(ValueError, "至少选择"):
+            web_app.normalize_public_news_selection({
+                "source_strategy": "public_news",
+                "public_news_sources": [],
+            })
+        with self.assertRaisesRegex(ValueError, "未知"):
+            web_app.normalize_public_news_selection({
+                "source_strategy": "all",
+                "public_news_sources": ["未知来源"],
+            })
 
     def test_review_ui_marks_body_failures_and_unknown_publication_time(self):
         html = (web_app.WEB_DIR / "index.html").read_text(encoding="utf-8")
@@ -1099,6 +1146,7 @@ class WebAccountStoreTests(unittest.TestCase):
         }
         payload = {
             "keywords": ["test"],
+            "public_news_sources": ["百度网页搜索"],
             "site_sessions": {"example.com": {"browser_session": "must-not-enter-history"}},
         }
         try:
@@ -1129,9 +1177,90 @@ class WebAccountStoreTests(unittest.TestCase):
                 crawl.call_args.kwargs["site_session_status_recorder"],
                 web_app.record_site_session_status,
             )
+            self.assertEqual(
+                crawl.call_args.kwargs["public_news_sources"],
+                ["百度网页搜索"],
+            )
             history_entry = append_history.call_args.args[0]
             self.assertNotIn("must-not-enter-history", str(history_entry))
             self.assertNotIn("site_sessions", history_entry["payload"])
+        finally:
+            web_app.TASKS.pop(task_id, None)
+
+    def test_run_crawl_job_tracks_every_progress_event_as_current_status(self):
+        task_id = "current-progress-event"
+        event_time = "2026-09-21T10:30:00"
+        web_app.TASKS[task_id] = {
+            "task_id": task_id,
+            "status": "queued",
+            "created_at": "2026-09-21T10:29:00",
+            "events": [],
+            "cancel_requested": False,
+        }
+
+        def fake_crawl(**kwargs):
+            kwargs["progress_callback"]({
+                "type": "source_waiting",
+                "message": "等待请求 测试来源",
+                "channel": "测试来源",
+                "time": event_time,
+            })
+            return "data/latest_news.json"
+
+        try:
+            with patch.object(web_app, "crawl_and_save_serialized", side_effect=fake_crawl), \
+                 patch.object(web_app, "read_json", return_value={}), \
+                 patch.object(web_app, "write_json_atomic"), \
+                 patch.object(
+                     web_app,
+                     "build_latest_payload",
+                     return_value={
+                         "meta": {
+                             "summary": {"real_count": 1},
+                             "min_real_results": 1,
+                             "reached_min_real_results": True,
+                         }
+                     },
+                 ), \
+                 patch.object(web_app, "append_task_history"), \
+                 patch.object(web_app, "archive_task_snapshot", return_value={}), \
+                 patch.object(web_app, "upsert_history_manifest"):
+                web_app.run_crawl_job(task_id, {"keywords": ["test"]})
+
+            task = web_app.TASKS[task_id]
+            self.assertEqual(task["last_event"], "等待请求 测试来源")
+            self.assertEqual(task["current_source"], "测试来源")
+            self.assertEqual(task["current_event_type"], "source_waiting")
+            self.assertEqual(task["updated_at"], event_time)
+        finally:
+            web_app.TASKS.pop(task_id, None)
+
+    def test_run_crawl_job_emits_terminal_failure_event(self):
+        task_id = "terminal-failure-event"
+        web_app.TASKS[task_id] = {
+            "task_id": task_id,
+            "status": "queued",
+            "created_at": "2026-09-21T10:29:00",
+            "events": [],
+            "cancel_requested": False,
+        }
+
+        try:
+            with patch.object(
+                web_app,
+                "crawl_and_save_serialized",
+                side_effect=RuntimeError("unexpected task failure"),
+            ), patch.object(web_app, "append_task_history"), patch.object(
+                web_app.HISTORY_ARCHIVE_STORE,
+                "archive_task",
+                return_value={},
+            ), patch.object(web_app, "upsert_history_manifest"):
+                web_app.run_crawl_job(task_id, {"keywords": ["test"]})
+
+            task = web_app.TASKS[task_id]
+            self.assertEqual(task["status"], "error")
+            self.assertEqual(task["events"][-1]["type"], "crawl_failure")
+            self.assertIn("unexpected task failure", task["events"][-1]["message"])
         finally:
             web_app.TASKS.pop(task_id, None)
 

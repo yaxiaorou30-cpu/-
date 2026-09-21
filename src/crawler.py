@@ -462,6 +462,7 @@ class NewsCrawler:
         progress_callback: Optional[Callable[[Dict], None]] = None,
         cancel_callback: Optional[Callable[[], bool]] = None,
         source_acceptance: bool = False,
+        public_news_sources: List[str] = None,
     ) -> List[Dict]:
         """
         多渠道舆情采集
@@ -472,6 +473,7 @@ class NewsCrawler:
             platforms: 兼容旧参数，作为社交平台列表使用
             social_platforms: 第二阶段社交平台增强列表
             stable_sources: 第一阶段政府官网名称列表
+            public_news_sources: 公开网页/新闻来源名称列表，默认全部启用
             region: 地区（省份+城市）
             time_range: 时间范围
             collect_level: 采集阈值等级
@@ -491,6 +493,12 @@ class NewsCrawler:
         if social_platforms is None:
             social_platforms = platforms if platforms is not None else PRIMARY_SOCIAL_PLATFORMS
         stable_source_names = self._select_stable_source_names(stable_sources)
+        public_news_source_names = self._select_public_news_source_names(public_news_sources)
+        public_news_platforms = [
+            source["platform"]
+            for source in PUBLIC_DISCOVERY_SOURCES
+            if source["name"] in public_news_source_names
+        ]
         results = []
         failures = []
         start_time, end_time = self._parse_time_range(time_range)
@@ -511,7 +519,7 @@ class NewsCrawler:
         logger.info(
             f"采集等级: {collect_level}, 最大结果: {target_count}, "
             f"数据源策略: {source_strategy}, 稳定源={stable_source_names}, "
-            f"公开网页/新闻={[source['name'] for source in PUBLIC_DISCOVERY_SOURCES]}, "
+            f"公开网页/新闻={public_news_source_names}, "
             f"社交增强={social_platforms}"
         )
         self._emit_progress(progress_callback, {
@@ -520,7 +528,7 @@ class NewsCrawler:
             "keywords": keywords,
             "source_strategy": source_strategy,
             "stable_sources": stable_source_names,
-            "public_news_sources": [source["name"] for source in PUBLIC_DISCOVERY_SOURCES],
+            "public_news_sources": public_news_source_names,
             "social_platforms": social_platforms,
         })
 
@@ -616,6 +624,7 @@ class NewsCrawler:
                             keyword=keyword,
                             province=province,
                             city=city,
+                            public_news_sources=public_news_source_names,
                         )
                         for public_request in public_news_requests:
                             if should_cancel():
@@ -647,7 +656,7 @@ class NewsCrawler:
                     group_results["public_news"] = self._limit_results_with_platform_coverage(
                         records=group_results["public_news"],
                         max_results=target_count,
-                        platforms=[source["platform"] for source in PUBLIC_DISCOVERY_SOURCES],
+                        platforms=public_news_platforms,
                     )
 
                 if (
@@ -727,6 +736,7 @@ class NewsCrawler:
             keywords=keywords,
             platforms=social_platforms,
             stable_sources=stable_source_names,
+            public_news_sources=public_news_source_names,
             region=region or "全国",
             time_range=time_range,
             collect_level=collect_level,
@@ -2840,6 +2850,7 @@ class NewsCrawler:
         keyword: str,
         province: Optional[str],
         city: Optional[str],
+        public_news_sources: Optional[List[str]] = None,
     ) -> List[Dict]:
         """生成彼此独立的公开网页/新闻发现请求。"""
         query = self._build_search_query(keyword, province, city)
@@ -2848,7 +2859,7 @@ class NewsCrawler:
             "qft": 'sortbydate="1"',
             "format": "RSS",
         })
-        return [{
+        requests_to_make = [{
             "channel": PUBLIC_NEWS_SOURCE["name"],
             "platform": PUBLIC_NEWS_SOURCE["platform"],
             "source_group": PUBLIC_NEWS_SOURCE["source_group"],
@@ -2864,6 +2875,21 @@ class NewsCrawler:
             "query": query,
             "timeout": BAIDU_WEB_SEARCH_SOURCE["timeout"],
         }]
+        selected = set(self._select_public_news_source_names(public_news_sources))
+        return [request for request in requests_to_make if request["channel"] in selected]
+
+    @staticmethod
+    def _select_public_news_source_names(selected_sources: Optional[List[str]]) -> List[str]:
+        available = [source["name"] for source in PUBLIC_DISCOVERY_SOURCES]
+        if selected_sources is None:
+            return available
+        if not isinstance(selected_sources, list):
+            raise ValueError("公开网页与新闻来源必须是列表")
+        selected = {str(source or "").strip() for source in selected_sources}
+        unknown = sorted(selected - set(available))
+        if unknown:
+            raise ValueError(f"未知的公开网页与新闻来源：{'、'.join(unknown)}")
+        return [source for source in available if source in selected]
 
     def _build_stable_source_requests(
         self,
@@ -3051,6 +3077,15 @@ class NewsCrawler:
                 })
                 continue
 
+            self._emit_progress(progress_callback, {
+                "type": "source_waiting",
+                "message": f"等待请求间隔：{channel}",
+                "channel": channel,
+                "platform": platform,
+                "source_group": source_group,
+                "url": url,
+                "keyword": keyword,
+            })
             self.anti_crawl.delay()
             if cancel_callback and cancel_callback():
                 break
@@ -3187,6 +3222,15 @@ class NewsCrawler:
                 })
                 continue
 
+            self._emit_progress(progress_callback, {
+                "type": "source_processing",
+                "message": f"正在解析和整理：{channel}",
+                "channel": channel,
+                "platform": platform,
+                "source_group": source_group,
+                "url": final_url or url,
+                "duration_seconds": elapsed,
+            })
             if not parsed_items:
                 previous_parser_hint = self._active_parser_hint
                 self._active_parser_hint = request_info.get("parser", "")
@@ -3422,13 +3466,19 @@ class NewsCrawler:
         except Exception as exc:
             channel = request.get("channel") or request.get("platform") or "unknown"
             logger.warning(f"来源组 '{channel}' 采集异常: {exc}")
-            return [], [{
+            failure = {
                 "channel": channel,
                 "platform": request.get("platform") or "",
                 "source_group": request.get("source_group") or "unknown",
                 "url": request.get("url") or "",
                 "error": f"source group collection failed: {exc}",
-            }]
+            }
+            self._emit_progress(kwargs.get("progress_callback"), {
+                "type": "source_failure",
+                "message": f"{channel} 采集异常: {exc}",
+                **failure,
+            })
+            return [], [failure]
 
     def _build_multi_channel_urls(self, platform: str, keyword: str,
                                    province: Optional[str], city: Optional[str],
@@ -4759,6 +4809,7 @@ class NewsCrawler:
         failures: List[Dict],
         started_at: datetime,
         stable_sources: List[str] = None,
+        public_news_sources: List[str] = None,
         source_acceptance: bool = False,
     ) -> Dict:
         total = len(data)
@@ -4884,7 +4935,7 @@ class NewsCrawler:
             "duration_seconds": round((datetime.now() - started_at).total_seconds(), 2),
             "keywords": keywords,
             "stable_sources": stable_sources or [],
-            "public_news_sources": [source["name"] for source in PUBLIC_DISCOVERY_SOURCES],
+            "public_news_sources": public_news_sources or [],
             "social_platforms": platforms,
             "platforms": platforms,
             "region": region,
@@ -5454,6 +5505,7 @@ def crawl_and_save(
     topic: str = None,
     site_session_resolver: Optional[Callable[[str], Optional[Dict]]] = None,
     site_session_status_recorder: Optional[Callable[[str, bool, str], None]] = None,
+    public_news_sources: List[str] = None,
 ) -> str:
     """采集并保存数据"""
     crawler = NewsCrawler(
@@ -5487,6 +5539,7 @@ def crawl_and_save(
         platforms=platforms,
         social_platforms=social_platforms,
         stable_sources=stable_sources,
+        public_news_sources=public_news_sources,
         region=region,
         time_range=time_range,
         collect_level=collect_level,

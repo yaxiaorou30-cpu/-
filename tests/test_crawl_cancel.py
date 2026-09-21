@@ -27,6 +27,8 @@ class CrawlCancellationTests(unittest.TestCase):
         self.assertTrue(task["cancel_requested"])
         self.assertEqual(task["status"], "running")
         self.assertIn("当前请求完成后停止", task["message"])
+        self.assertEqual(task["current_event_type"], "cancel_requested")
+        self.assertTrue(task["updated_at"])
         with self.assertRaisesRegex(ValueError, "已经申请中止"):
             web_app.request_crawl_cancel("cancel-test")
 

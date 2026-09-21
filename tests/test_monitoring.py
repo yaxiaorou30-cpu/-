@@ -81,9 +81,13 @@ class MonitoringTests(unittest.TestCase):
 
     def test_plan_persists_conditions_without_credentials(self):
         manager = self.manager(SequenceRunner([]))
-        plan = manager.create_plan(monitor_payload(), 15)
+        plan = manager.create_plan(
+            monitor_payload(public_news_sources=["百度网页搜索"]),
+            15,
+        )
 
         self.assertEqual(plan["payload"]["social_platforms"], ["微博"])
+        self.assertEqual(plan["payload"]["public_news_sources"], ["百度网页搜索"])
         self.assertEqual(plan["payload"]["max_results"], 37)
         self.assertEqual(plan["payload"]["min_real_results"], 37)
         self.assertEqual(plan["payload"]["collect_level"], "标准采集")

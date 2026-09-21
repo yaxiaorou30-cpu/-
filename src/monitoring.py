@@ -97,6 +97,7 @@ def normalize_monitor_payload(payload: dict) -> dict:
         "collect_level": collect_level,
         "time_range": str(payload.get("time_range") or "近一周").strip(),
         "stable_sources": _text_list(payload.get("stable_sources")),
+        "public_news_sources": _text_list(payload.get("public_news_sources")),
         "social_platforms": _text_list(payload.get("social_platforms")),
         "use_system_proxy": bool(payload.get("use_system_proxy", False)),
         "enable_debug_snapshots": bool(payload.get("enable_debug_snapshots", False)),

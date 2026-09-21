@@ -884,6 +884,7 @@ class WebDeepSeekHandlerTests(unittest.TestCase):
         )
         self.meta_file.write_text(
             json.dumps({
+                "task_id": "ai-report-test",
                 "topic": "测试事件",
                 "review": {
                     "reviewed_at": "2026-08-14T10:00:00",
@@ -903,8 +904,10 @@ class WebDeepSeekHandlerTests(unittest.TestCase):
             }],
         }
         self.confirmation_store = OneShotAiConfirmationStore()
+        web_app.TASKS.pop("ai-report-test", None)
 
     def tearDown(self):
+        web_app.TASKS.pop("ai-report-test", None)
         shutil.rmtree(self.root, ignore_errors=True)
 
     def current_scope_token(self):
@@ -987,14 +990,21 @@ class WebDeepSeekHandlerTests(unittest.TestCase):
         }
 
         class FakeClient:
+            def __init__(self, *, progress_callback):
+                self.progress_callback = progress_callback
+
             def generate(self, records, preview, *, template_id):
                 calls.append((records, preview, template_id))
+                self.progress_callback({
+                    "type": "ai_batch_start",
+                    "message": "DeepSeek 正在分析第 1/1 批",
+                })
                 return expected_draft
 
         with (
             patch.object(web_app, "DATA_FILE", self.data_file),
             patch.object(web_app, "META_FILE", self.meta_file),
-            patch.object(web_app, "DeepSeekReportClient", return_value=FakeClient()),
+            patch.object(web_app, "DeepSeekReportClient", FakeClient),
             patch.object(web_app, "AI_CONFIRMATION_STORE", self.confirmation_store),
             patch("src.orchestrator.build_report_preview", return_value=self.preview),
             patch.object(
@@ -1016,6 +1026,9 @@ class WebDeepSeekHandlerTests(unittest.TestCase):
         self.assertEqual(len(calls), 1)
         self.assertEqual(calls[0][0][0]["content"], self.record["content"])
         self.assertNotEqual(calls[0][0], handler.payload["records"])
+        task = web_app.TASKS["ai-report-test"]
+        self.assertEqual(task["events"][-1]["type"], "ai_batch_start")
+        self.assertEqual(task["events"][-1]["channel"], "DeepSeek")
 
     def test_ai_handler_rejects_stale_scope_confirmation_without_provider_call(self):
         handler = self.DummyHandler({
@@ -1224,6 +1237,8 @@ class DeepSeekReportUiContractTests(unittest.TestCase):
         self.assertIn("完整发送", self.javascript)
         self.assertIn("无省略", self.javascript)
         self.assertIn("无截断", self.javascript)
+        self.assertIn("随后将按上方所示批次发起多次调用", self.javascript)
+        self.assertNotIn("随后才会发起一次收费请求", self.javascript)
         self.assertIn("按所示批次向第三方 AI 发起多次请求", self.html)
 
     def test_ai_endpoint_is_only_called_by_explicit_generate_action(self):
@@ -1237,6 +1252,14 @@ class DeepSeekReportUiContractTests(unittest.TestCase):
         self.assertIn("els.aiExternalSendConfirm.checked", self.javascript)
         self.assertIn('els.aiGenerateBtn.addEventListener("click", generateAiReportDraft)', self.javascript)
         self.assertIn('els.aiApplyBtn.addEventListener("click", applyAiDraftToPreview)', self.javascript)
+
+    def test_ai_generation_reuses_task_polling_for_progress_events(self):
+        self.assertIn(
+            "const aiTaskId = state.latest?.meta?.task_id || state.taskId;",
+            self.javascript,
+        )
+        self.assertIn("startTaskPolling(aiTaskId, { aiOnly: true });", self.javascript)
+        self.assertIn("if (terminal && (!aiOnly || !state.aiRequestPending))", self.javascript)
 
     def test_ai_draft_does_not_directly_replace_rule_preview_on_generation(self):
         generate_start = self.javascript.index("async function generateAiReportDraft()")

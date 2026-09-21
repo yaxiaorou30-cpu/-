@@ -87,6 +87,7 @@ class DeepSeekBatchingTests(unittest.TestCase):
     def test_batch_prompt_is_open_ended_and_final_prompt_keeps_four_section_interface(self):
         record = self.reviewed_record(1, "完整正文")
         calls = []
+        progress_events = []
 
         def fake_post(_url, *, json: dict, **_kwargs):
             calls.append(json)
@@ -126,6 +127,7 @@ class DeepSeekBatchingTests(unittest.TestCase):
             api_key="deepseek-key-secret",
             request_post=fake_post,
             input_budget_tokens=4_096,
+            progress_callback=progress_events.append,
         )
 
         result = client.generate([record], {}, template_id="event_report")
@@ -141,6 +143,17 @@ class DeepSeekBatchingTests(unittest.TestCase):
         self.assertEqual(result["scope"]["sent_record_count"], 1)
         self.assertEqual(result["scope"]["provider_call_count"], 2)
         self.assertEqual(result["usage"]["total_tokens"], 30)
+        self.assertEqual(
+            [event["type"] for event in progress_events],
+            [
+                "ai_plan",
+                "ai_batch_start",
+                "ai_batch_complete",
+                "ai_final_start",
+                "ai_complete",
+            ],
+        )
+        self.assertEqual(progress_events[0]["batch_total"], 1)
 
     def test_disclosure_reports_complete_multi_batch_scope(self):
         records = [
@@ -169,6 +182,7 @@ class DeepSeekBatchingTests(unittest.TestCase):
             for index in range(1, 4)
         ]
         prompts = []
+        progress_events = []
 
         def fake_post(_url, *, json: dict, **_kwargs):
             prompt = json["messages"][1]["content"]
@@ -202,6 +216,7 @@ class DeepSeekBatchingTests(unittest.TestCase):
             api_key="deepseek-key-secret",
             request_post=fake_post,
             input_budget_tokens=4_096,
+            progress_callback=progress_events.append,
         )
 
         result = client.generate(records, {})
@@ -210,6 +225,7 @@ class DeepSeekBatchingTests(unittest.TestCase):
         self.assertIn("全部批次分析材料如下", prompts[-1])
         self.assertEqual(result["sections"]["summary"], "最终摘要")
         self.assertEqual(result["scope"]["provider_call_count"], len(prompts))
+        self.assertIn("ai_merge_start", [event["type"] for event in progress_events])
 
 
 if __name__ == "__main__":

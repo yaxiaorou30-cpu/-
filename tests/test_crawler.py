@@ -272,6 +272,39 @@ class CrawlerParsingTests(unittest.TestCase):
         self.assertNotIn("government_sources", check_ids)
         self.assertNotEqual(quality["status_code"], "collection_failed")
 
+    def test_public_news_can_select_baidu_without_calling_bing(self):
+        calls = []
+
+        def fake_collect(**kwargs):
+            request = kwargs["source_requests"][0]
+            calls.append(request["parser"])
+            return ([{
+                "title": "百度网页结果",
+                "content": "百度公开网页内容",
+                "url": "https://example.com/baidu-result",
+                "platform": "百度网页",
+                "source_group": "public_news",
+                "data_type": "real",
+            }], [])
+
+        self.crawler._collect_source_requests_safely = fake_collect
+
+        records = self.crawler.crawl(
+            ["公开信息"],
+            max_results=1,
+            collect_level="最小采集",
+            source_strategy="public_news",
+            public_news_sources=["百度网页搜索"],
+            min_real_results=0,
+        )
+
+        self.assertEqual(calls, ["baidu_qianfan_web_search"])
+        self.assertEqual(len(records), 1)
+        self.assertEqual(
+            self.crawler.last_meta["public_news_sources"],
+            ["百度网页搜索"],
+        )
+
     def test_public_news_does_not_start_baidu_after_bing_reaches_target(self):
         def fake_collect(**kwargs):
             request = kwargs["source_requests"][0]
@@ -1837,11 +1870,38 @@ class CrawlerPolicyTests(unittest.TestCase):
         self.assertEqual(len(data), 1)
         event_types = {event["type"] for event in events}
         self.assertIn("crawl_start", event_types)
+        self.assertIn("source_waiting", event_types)
         self.assertIn("source_start", event_types)
+        self.assertIn("source_processing", event_types)
         self.assertIn("source_success", event_types)
         self.assertIn("crawl_complete", event_types)
         self.assertIn("quality_metrics", self.crawler.last_meta)
         self.assertIn("source_health", self.crawler.last_meta)
+
+    def test_unexpected_source_exception_emits_failure_event(self):
+        events = []
+        source_request = {
+            "channel": "测试来源",
+            "platform": "测试平台",
+            "source_group": "stable",
+            "url": "https://example.com/search",
+        }
+
+        with patch.object(
+            self.crawler,
+            "_collect_from_source_requests",
+            side_effect=RuntimeError("unexpected parser failure"),
+        ):
+            records, failures = self.crawler._collect_source_requests_safely(
+                source_requests=[source_request],
+                progress_callback=events.append,
+            )
+
+        self.assertEqual(records, [])
+        self.assertEqual(len(failures), 1)
+        self.assertEqual(events[-1]["type"], "source_failure")
+        self.assertEqual(events[-1]["channel"], "测试来源")
+        self.assertIn("unexpected parser failure", events[-1]["message"])
 
     def test_social_cookie_auth_headers_are_platform_scoped(self):
         self.crawler.set_account("微博", username="tester", cookie="SUB=fake-cookie")

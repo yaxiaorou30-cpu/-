@@ -193,7 +193,30 @@ def request_crawl_cancel(task_id: str) -> dict:
             raise ValueError("已经申请中止，请等待当前请求结束")
         task["cancel_requested"] = True
         task["message"] = "正在中止采集；当前请求完成后停止"
+        task["current_event_type"] = "cancel_requested"
+        task["updated_at"] = datetime.now().isoformat()
         return dict(task)
+
+
+def append_task_event(task_id: str, event: dict) -> bool:
+    event = dict(event or {})
+    if not event.get("time"):
+        event["time"] = datetime.now().isoformat()
+    with TASK_LOCK:
+        task = TASKS.get(str(task_id or "").strip())
+        if not task:
+            return False
+        events = task.setdefault("events", [])
+        events.append(event)
+        del events[:-MAX_EVENTS]
+        if event.get("channel"):
+            task["current_source"] = event["channel"]
+        if event.get("type"):
+            task["current_event_type"] = event["type"]
+        if event.get("message"):
+            task["last_event"] = event["message"]
+        task["updated_at"] = event["time"]
+    return True
 
 
 class _DataBlob(ctypes.Structure):
@@ -769,6 +792,26 @@ def task_payload_summary(payload):
     }
 
 
+def normalize_public_news_selection(payload: dict) -> dict:
+    normalized = dict(payload or {})
+    available = [source["name"] for source in PUBLIC_DISCOVERY_SOURCES]
+    raw = normalized.get("public_news_sources")
+    if raw is None:
+        selected = available
+    elif not isinstance(raw, list):
+        raise ValueError("公开网页与新闻来源必须是列表")
+    else:
+        requested = {str(source or "").strip() for source in raw}
+        unknown = sorted(requested - set(available))
+        if unknown:
+            raise ValueError(f"未知的公开网页与新闻来源：{'、'.join(unknown)}")
+        selected = [source for source in available if source in requested]
+    if normalized.get("source_strategy") == "public_news" and not selected:
+        raise ValueError("仅检索公开网页与新闻时，至少选择 Bing 或百度中的一个来源")
+    normalized["public_news_sources"] = selected
+    return normalized
+
+
 def sanitize_task_history_entry(entry):
     """只向历史记录页面暴露复用任务所需的非敏感元数据。"""
     if not isinstance(entry, dict):
@@ -1091,21 +1134,13 @@ def run_crawl_job(task_id: str, payload: dict):
             return bool(TASKS.get(task_id, {}).get("cancel_requested"))
 
     def emit(event):
-        with TASK_LOCK:
-            task = TASKS.get(task_id)
-            if not task:
-                return
-            events = task.setdefault("events", [])
-            events.append(event)
-            del events[:-MAX_EVENTS]
-            if event.get("type") == "source_start":
-                task["current_source"] = event.get("channel")
-            if event.get("type") in {"source_success", "source_failure"}:
-                task["last_event"] = event.get("message")
+        append_task_event(task_id, event)
 
     with TASK_LOCK:
+        started_at = datetime.now().isoformat()
         TASKS[task_id]["status"] = "running"
-        TASKS[task_id]["started_at"] = datetime.now().isoformat()
+        TASKS[task_id]["started_at"] = started_at
+        TASKS[task_id]["updated_at"] = started_at
         TASKS[task_id]["message"] = (
             "正在中止采集；当前请求完成后停止"
             if TASKS[task_id].get("cancel_requested")
@@ -1140,6 +1175,7 @@ def run_crawl_job(task_id: str, payload: dict):
             meta_path=str(meta_file),
             social_platforms=social_platforms,
             stable_sources=payload.get("stable_sources") or None,
+            public_news_sources=payload.get("public_news_sources"),
             max_results=max_results,
             region=str(payload.get("region") or "").strip() or None,
             time_range=payload.get("time_range") or "近一周",
@@ -1221,18 +1257,24 @@ def run_crawl_job(task_id: str, payload: dict):
         manifest = HISTORY_ARCHIVE_STORE.archive_task(task_id, history_entry=history_entry)
         upsert_history_manifest(manifest)
     except Exception as exc:
+        error_message = f"采集任务失败：{exc}"
+        emit({
+            "type": "crawl_failure",
+            "message": error_message,
+            "time": datetime.now().isoformat(),
+        })
         with TASK_LOCK:
             task = TASKS.get(task_id)
             if task:
                 task["status"] = "error"
-                task["message"] = str(exc)
+                task["message"] = error_message
                 task["completed_at"] = datetime.now().isoformat()
         history_entry = {
             "task_id": task_id,
             "status": "error",
             "created_at": TASKS.get(task_id, {}).get("created_at", ""),
             "completed_at": datetime.now().isoformat(),
-            "message": str(exc),
+            "message": error_message,
             "payload": task_payload_summary(payload),
         }
         append_task_history(history_entry)
@@ -1270,6 +1312,7 @@ def run_monitor_crawl(
         meta_path=str(meta_file),
         social_platforms=payload.get("social_platforms") or [],
         stable_sources=payload.get("stable_sources") or [],
+        public_news_sources=payload.get("public_news_sources"),
         max_results=max_results,
         region=str(payload.get("region") or "").strip() or None,
         time_range=payload.get("time_range") or "近一周",
@@ -2088,6 +2131,7 @@ class WebUIHandler(BaseHTTPRequestHandler):
     def handle_crawl(self):
         try:
             payload = normalize_collection_target(self.read_body_json())
+            payload = normalize_public_news_selection(payload)
             if payload.get("async", True):
                 task_id = uuid.uuid4().hex[:12]
                 with TASK_LOCK:
@@ -2318,7 +2362,8 @@ class WebUIHandler(BaseHTTPRequestHandler):
         try:
             request = self.read_body_json(max_bytes=256 * 1024)
             plan = get_monitor_manager().create_plan(
-                request.get("payload") or {}, request.get("interval_minutes")
+                normalize_public_news_selection(request.get("payload") or {}),
+                request.get("interval_minutes"),
             )
             self.send_json({
                 "ok": True,
@@ -2630,6 +2675,7 @@ class WebUIHandler(BaseHTTPRequestHandler):
             self.send_json({"ok": False, "message": str(exc)}, status=500)
 
     def handle_ai_report_draft(self):
+        ai_task_id = ""
         try:
             payload = self.read_body_json(max_bytes=32 * 1024)
             if payload.get("confirmed_external_send") is not True:
@@ -2646,6 +2692,18 @@ class WebUIHandler(BaseHTTPRequestHandler):
             current_meta = read_json(META_FILE, {})
             if not review_is_complete(current_data, current_meta):
                 raise ValueError("当前数据尚未完成人工审核，不能发送给第三方 AI")
+            ai_task_id = str(current_meta.get("task_id") or "").strip()
+            if ai_task_id:
+                with TASK_LOCK:
+                    TASKS.setdefault(ai_task_id, {
+                        "task_id": ai_task_id,
+                        "status": "done",
+                        "message": "采集已完成",
+                        "created_at": str(current_meta.get("started_at") or ""),
+                        "completed_at": str(current_meta.get("generated_at") or ""),
+                        "events": [],
+                        "payload": current_meta.get("task_payload") or {},
+                    })
             report_data, report_scope = filter_report_records(
                 current_data,
                 payload.get("report_filter"),
@@ -2677,7 +2735,10 @@ class WebUIHandler(BaseHTTPRequestHandler):
                 or confirmed_scope_token != current_disclosure["scope_token"]
             ):
                 raise ValueError("本次拟发送的数据或模型范围已变化，请重新生成预览并确认")
-            draft = DeepSeekReportClient().generate(
+            def emit_ai_progress(event):
+                append_task_event(ai_task_id, {"channel": "DeepSeek", **event})
+
+            draft = DeepSeekReportClient(progress_callback=emit_ai_progress).generate(
                 report_data,
                 preview,
                 template_id=template_id,
@@ -2698,12 +2759,22 @@ class WebUIHandler(BaseHTTPRequestHandler):
         except FileNotFoundError as exc:
             self.send_json({"ok": False, "message": str(exc)}, status=404)
         except DeepSeekReportError as exc:
+            append_task_event(ai_task_id, {
+                "type": "ai_failure",
+                "channel": "DeepSeek",
+                "message": f"DeepSeek 报告生成失败：{exc}",
+            })
             self.send_json({"ok": False, "message": str(exc)}, status=502)
         except AiConfirmationError as exc:
             self.send_json({"ok": False, "message": str(exc)}, status=409)
         except (ValueError, TypeError, json.JSONDecodeError) as exc:
             self.send_json({"ok": False, "message": str(exc)}, status=400)
         except Exception:
+            append_task_event(ai_task_id, {
+                "type": "ai_failure",
+                "channel": "DeepSeek",
+                "message": "DeepSeek 报告生成失败，请检查服务端日志",
+            })
             self.send_json(
                 {"ok": False, "message": "AI 分析草稿生成失败，规则报告仍保留"},
                 status=500,

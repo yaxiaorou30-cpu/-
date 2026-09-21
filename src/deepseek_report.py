@@ -281,6 +281,7 @@ class DeepSeekReportClient:
         timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
         input_budget_tokens: int | None = None,
         request_post: Callable | None = None,
+        progress_callback: Callable[[dict], None] | None = None,
     ):
         self._api_key = (
             str(os.environ.get("DEEPSEEK_API_KEY") or "").strip()
@@ -295,6 +296,11 @@ class DeepSeekReportClient:
             else input_budget_tokens
         )
         self._request_post = request_post or requests.post
+        self._progress_callback = progress_callback
+
+    def _emit_progress(self, event_type: str, message: str, **details) -> None:
+        if self._progress_callback:
+            self._progress_callback({"type": event_type, "message": message, **details})
 
     def generate(
         self,
@@ -314,12 +320,31 @@ class DeepSeekReportClient:
             template_id=template_id,
             input_budget_tokens=self.input_budget_tokens,
         )
+        batch_total = len(payloads)
+        self._emit_progress(
+            "ai_plan",
+            f"DeepSeek 已规划 {batch_total} 个数据批次",
+            batch_total=batch_total,
+            record_count=scope["sent_record_count"],
+        )
         analyses = []
         usage_parts = []
         for index, payload in enumerate(payloads, start=1):
+            self._emit_progress(
+                "ai_batch_start",
+                f"DeepSeek 正在分析第 {index}/{batch_total} 批",
+                batch_index=index,
+                batch_total=batch_total,
+            )
             response_payload, content = self._request_content(payload)
             analyses.append({"batch_id": f"B{index}", "analysis": content})
             usage_parts.append(_sanitize_usage(response_payload.get("usage")))
+            self._emit_progress(
+                "ai_batch_complete",
+                f"DeepSeek 已完成第 {index}/{batch_total} 批分析",
+                batch_index=index,
+                batch_total=batch_total,
+            )
 
         analyses, merge_usage = self._reduce_analyses(
             analyses,
@@ -333,6 +358,7 @@ class DeepSeekReportClient:
             template_id=template_id,
             input_budget_tokens=scope["input_budget_tokens"],
         )
+        self._emit_progress("ai_final_start", "DeepSeek 正在生成最终综合报告")
         response_payload, content = self._request_content(final_payload)
         usage_parts.append(_sanitize_usage(response_payload.get("usage")))
         sections = validate_ai_report_output(
@@ -341,6 +367,11 @@ class DeepSeekReportClient:
         )
         usage = _sum_usage(usage_parts)
         scope["provider_call_count"] = len(usage_parts)
+        self._emit_progress(
+            "ai_complete",
+            f"DeepSeek 报告生成完成，共调用 {len(usage_parts)} 次",
+            provider_call_count=len(usage_parts),
+        )
         return {
             "provider": DEEPSEEK_PROVIDER,
             "model": self.model,
@@ -428,6 +459,13 @@ class DeepSeekReportClient:
             )
             merged = []
             for index, group in enumerate(groups, start=1):
+                self._emit_progress(
+                    "ai_merge_start",
+                    f"DeepSeek 正在合并第 {level} 层第 {index}/{len(groups)} 组材料",
+                    merge_level=level,
+                    group_index=index,
+                    group_total=len(groups),
+                )
                 payload = _build_merge_payload(
                     group,
                     model=self.model,
