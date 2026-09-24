@@ -3325,7 +3325,7 @@ class SiteSessionArticleTests(unittest.TestCase):
         self.assertIn("site_session_resolver", inspect.signature(crawl_and_save).parameters)
         self.assertIn("site_session_status_recorder", inspect.signature(crawl_and_save).parameters)
 
-    def test_default_policy_allows_saved_session_without_robots_but_keeps_explicit_disable(self):
+    def test_default_policy_allows_saved_sessions_without_public_robots_gate(self):
         def unexpected_fetch(*args, **kwargs):
             raise AssertionError("默认授权会话不应把 robots 当前置总开关")
 
@@ -3338,15 +3338,15 @@ class SiteSessionArticleTests(unittest.TestCase):
             "https://unregistered-session.example/article/1",
             access_mode=AUTHORIZED_SESSION_ACCESS_MODE,
         )
-        explicitly_disabled = policy.check(
+        registered = policy.check(
             "https://www.baidu.com/s?wd=test",
             access_mode=AUTHORIZED_SESSION_ACCESS_MODE,
         )
 
         self.assertTrue(unregistered.allowed)
         self.assertEqual(unregistered.code, "authorized_session_allowed")
-        self.assertFalse(explicitly_disabled.allowed)
-        self.assertEqual(explicitly_disabled.code, "authorized_session_disabled")
+        self.assertTrue(registered.allowed)
+        self.assertEqual(registered.code, "authorized_session_allowed")
 
 
 class DownstreamCompatibilityTests(unittest.TestCase):

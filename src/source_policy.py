@@ -36,6 +36,17 @@ VALID_ACCESS_MODES = {
 MAX_ROBOTS_BYTES = 512 * 1024
 DEFAULT_CACHE_TTL_SECONDS = 6 * 60 * 60
 FAILURE_CACHE_TTL_SECONDS = 5 * 60
+PRIVATE_PAGE_PATHS = {
+    "/account",
+    "/accounts",
+    "/inbox",
+    "/message",
+    "/messages",
+    "/notification",
+    "/notifications",
+    "/setting",
+    "/settings",
+}
 
 
 def _utc_now_iso() -> str:
@@ -277,6 +288,15 @@ class SourceAccessPolicy:
             )
 
         path = parsed.path or "/"
+        if _is_private_page_path(path):
+            return self._decision(
+                False,
+                "local_path_denied",
+                "禁止自动访问账号、设置、消息等私人页面",
+                rule,
+                channel,
+                access_mode=access_mode,
+            )
         denied_prefixes = tuple(rule.get("denied_path_prefixes") or ())
         if any(path.startswith(prefix) for prefix in denied_prefixes):
             return self._decision(
@@ -287,26 +307,11 @@ class SourceAccessPolicy:
                 channel,
                 access_mode=access_mode,
             )
-        allowed_paths = tuple(rule.get("allowed_paths") or ())
-        allowed_prefixes = tuple(rule.get("allowed_path_prefixes") or ())
-        if (allowed_paths or allowed_prefixes) and not (
-            path in allowed_paths
-            or any(path.startswith(prefix) for prefix in allowed_prefixes)
-        ):
-            return self._decision(
-                False,
-                "path_not_registered",
-                "该路径不在来源登记的允许范围内",
-                rule,
-                channel,
-                access_mode=access_mode,
-            )
-
         if access_mode == AUTHORIZED_SESSION_ACCESS_MODE:
             robots_required = bool(
                 rule.get(
                     "authorized_session_robots_required",
-                    rule.get("robots_required", True),
+                    False,
                 )
             )
         elif access_mode == EXTERNAL_ADAPTER_ACCESS_MODE:
@@ -345,7 +350,7 @@ class SourceAccessPolicy:
             decision = self._decision(
                 False,
                 "robots_unreachable",
-                "robots.txt 因网络或服务器错误不可达，自动访问已暂停",
+                "robots.txt 因网络或服务器错误不可达，已跳过当前来源",
                 rule,
                 channel,
                 robots,
@@ -355,7 +360,7 @@ class SourceAccessPolicy:
             decision = self._decision(
                 False,
                 "robots_rate_limited",
-                "robots.txt 返回限流状态，自动访问已暂停",
+                "robots.txt 返回限流状态，已跳过当前来源",
                 rule,
                 channel,
                 robots,
@@ -367,7 +372,7 @@ class SourceAccessPolicy:
             decision = self._decision(
                 False,
                 "robots_disallowed",
-                "robots.txt 明确禁止当前自动客户端访问该路径",
+                "robots.txt 明确禁止当前自动客户端访问该路径，已跳过当前来源",
                 rule,
                 channel,
                 robots,
@@ -555,6 +560,14 @@ class SourceAccessPolicy:
 def _path_category(path: str) -> str:
     parts = [part for part in str(path or "/").split("/") if part]
     return "/" if not parts else f"/{parts[0]}/…"
+
+
+def _is_private_page_path(path: str) -> bool:
+    normalized = "/" + str(path or "/").lstrip("/").casefold().rstrip("/")
+    return any(
+        normalized == private_path or normalized.startswith(private_path + "/")
+        for private_path in PRIVATE_PAGE_PATHS
+    )
 
 
 def _is_local_or_private_literal(hostname: str) -> bool:

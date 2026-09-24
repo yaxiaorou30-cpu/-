@@ -97,7 +97,7 @@ class MonitoringTests(unittest.TestCase):
         self.assertNotIn("secret-cookie", raw)
         self.assertNotIn('"accounts"', raw)
 
-    def test_first_run_builds_baseline_and_second_run_only_adds_new_clue(self):
+    def test_first_run_enters_review_and_second_run_adds_new_clue(self):
         first = record("第一条", "https://weibo.com/1/AAA?utm_source=test")
         second = record("第二条", "https://weibo.com/1/BBB")
         runner = SequenceRunner([
@@ -114,17 +114,151 @@ class MonitoringTests(unittest.TestCase):
         plan_id = manager.create_plan(monitor_payload(), 15)["id"]
 
         manager.run_plan(plan_id)
-        baseline = manager.get_plan(plan_id)
-        self.assertTrue(baseline["baseline_ready"])
-        self.assertEqual(baseline["latest_new_count"], 0)
-        self.assertEqual(baseline["runs"][0]["status"], "baseline")
+        initial = manager.get_plan(plan_id)
+        self.assertTrue(initial["baseline_ready"])
+        self.assertEqual(initial["latest_new_count"], 1)
+        self.assertEqual(initial["runs"][0]["initial_count"], 1)
+        self.assertEqual(initial["review"]["pending_count"], 1)
+        initial_records = manager.get_records(plan_id)
+        self.assertEqual(initial_records[0]["monitoring"]["change_type"], "initial")
+        self.assertEqual(initial_records[0]["monitoring"]["review_status"], "pending")
 
         manager.run_plan(plan_id)
         updated = manager.get_plan(plan_id)
         self.assertEqual(updated["latest_new_count"], 1)
-        self.assertEqual(updated["total_new"], 1)
-        self.assertEqual(len(updated["new_items"]), 1)
+        self.assertEqual(updated["total_new"], 2)
+        self.assertEqual(len(updated["new_items"]), 2)
         self.assertEqual(updated["new_items"][0]["title"], "第二条")
+
+    def test_changed_content_is_saved_as_update_and_requires_review_again(self):
+        original = record("同一条", "https://example.com/news/1")
+        changed = {**original, "content": "正文已更新，增加了新的处置结果"}
+        runner = SequenceRunner([
+            {"records": [original], "meta": {"summary": {"real_count": 1}, "failures": []}},
+            {"records": [changed], "meta": {"summary": {"real_count": 1}, "failures": []}},
+        ])
+        manager = self.manager(runner)
+        plan_id = manager.create_plan(monitor_payload(), 15)["id"]
+
+        manager.run_plan(plan_id)
+        first_record = manager.get_records(plan_id)[0]
+        manager.save_reviews(plan_id, [{
+            "record_id": first_record["monitoring"]["record_id"],
+            "keep": True,
+            "content_category": "社会民生",
+            "sentiment_label": "中性",
+        }], reviewer="测试员")
+        self.assertEqual(manager.get_plan(plan_id)["review"]["pending_count"], 0)
+
+        manager.run_plan(plan_id)
+        current = manager.get_records(plan_id)
+        self.assertEqual(len(current), 1)
+        self.assertEqual(current[0]["content"], changed["content"])
+        self.assertEqual(current[0]["monitoring"]["change_type"], "updated")
+        self.assertEqual(current[0]["monitoring"]["version"], 2)
+        self.assertEqual(current[0]["monitoring"]["review_status"], "pending")
+        self.assertNotIn("human_review", current[0])
+        plan = manager.get_plan(plan_id)
+        self.assertEqual(plan["latest_updated_count"], 1)
+        self.assertEqual(plan["review"]["pending_count"], 1)
+
+    def test_cross_source_exact_repost_is_not_kept_twice(self):
+        first = record("首发", "https://official.example.com/1")
+        first["platform"] = "政府网站"
+        first["source"] = "官方发布"
+        first["content"] = "这是一段足够长且完全相同的正式通报正文。" * 5
+        repost = record("转载标题", "https://media.example.com/repost/1")
+        repost["platform"] = "媒体网站"
+        repost["source"] = "转载媒体"
+        repost["content"] = first["content"]
+        runner = SequenceRunner([{
+            "records": [first, repost],
+            "meta": {"summary": {"real_count": 2}, "failures": []},
+        }])
+        manager = self.manager(runner)
+        plan_id = manager.create_plan(monitor_payload(), 15)["id"]
+
+        manager.run_plan(plan_id)
+
+        self.assertEqual(len(manager.get_records(plan_id)), 1)
+        plan = manager.get_plan(plan_id)
+        self.assertEqual(plan["duplicate_count"], 1)
+        duplicate_log = json.loads(
+            (self.data_root / plan_id / "duplicates.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(len(duplicate_log), 1)
+        self.assertNotIn("content", duplicate_log[0])
+
+    def test_each_successful_run_keeps_a_full_snapshot(self):
+        first = record("第一条", "https://example.com/1")
+        second = record("第二条", "https://example.com/2")
+        runner = SequenceRunner([
+            {"records": [first], "meta": {"summary": {"real_count": 1}, "failures": []}},
+            {"records": [first, second], "meta": {"summary": {"real_count": 2}, "failures": []}},
+        ])
+        manager = self.manager(runner)
+        plan_id = manager.create_plan(monitor_payload(), 15)["id"]
+
+        manager.run_plan(plan_id)
+        manager.run_plan(plan_id)
+
+        snapshot_paths = sorted((self.data_root / plan_id / "runs").glob("*.json"))
+        self.assertEqual(len(snapshot_paths), 2)
+        snapshots = [json.loads(path.read_text(encoding="utf-8")) for path in snapshot_paths]
+        self.assertEqual(sorted(len(item["records"]) for item in snapshots), [1, 2])
+        self.assertEqual(len(json.loads(
+            (self.data_root / plan_id / "records.json").read_text(encoding="utf-8")
+        )), 2)
+
+    def test_report_snapshot_requires_review_and_stays_frozen(self):
+        first = record("第一条", "https://example.com/1")
+        second = record("第二条", "https://example.com/2")
+        runner = SequenceRunner([
+            {"records": [first], "meta": {"summary": {"real_count": 1}, "failures": []}},
+            {"records": [first, second], "meta": {"summary": {"real_count": 2}, "failures": []}},
+        ])
+        manager = self.manager(runner)
+        plan_id = manager.create_plan(monitor_payload(), 15)["id"]
+        manager.run_plan(plan_id)
+
+        with self.assertRaisesRegex(ValueError, "1 条.*待审核"):
+            manager.create_report_snapshot(plan_id)
+
+        first_record = manager.get_records(plan_id)[0]
+        manager.save_reviews(plan_id, [{
+            "record_id": first_record["monitoring"]["record_id"],
+            "keep": True,
+            "content_category": "社会民生",
+            "sentiment_label": "中性",
+        }])
+        snapshot = manager.create_report_snapshot(plan_id)
+        self.assertEqual(len(snapshot["records"]), 1)
+        self.assertTrue(snapshot["records"][0]["human_review"]["reviewed_at"])
+
+        manager.run_plan(plan_id)
+        frozen = manager.get_report_snapshot(plan_id, snapshot["snapshot_id"])
+        self.assertEqual(len(frozen["records"]), 1)
+        self.assertEqual(frozen["records"][0]["title"], "第一条")
+
+    def test_monitor_plan_has_a_daily_preview_job(self):
+        manager = self.manager(SequenceRunner([{
+            "records": [],
+            "meta": {"summary": {"real_count": 0}, "failures": []},
+        }]))
+        manager.start()
+        try:
+            plan = manager.create_plan(
+                monitor_payload(),
+                15,
+                daily_preview_time="20:30",
+            )
+            self.assertEqual(plan["daily_preview_time"], "20:30")
+            self.assertIsNotNone(
+                manager._scheduler.get_job(f"monitor-preview:{plan['id']}")
+            )
+            self.assertTrue(manager.get_plan(plan["id"])["next_preview_at"])
+        finally:
+            manager.shutdown()
 
     def test_fingerprint_prefers_normalized_original_url(self):
         first = record("标题甲", "https://WEIBO.com/1/AAA/?utm_source=x&refer_flag=1")
@@ -182,7 +316,7 @@ class MonitoringTests(unittest.TestCase):
 
         self.assertTrue(restored["baseline_ready"])
         self.assertEqual(restored["latest_new_count"], 0)
-        self.assertEqual(restored["total_new"], 0)
+        self.assertEqual(restored["total_new"], 1)
 
     def test_at_most_five_plans_can_run_at_the_same_time(self):
         manager = self.manager(SequenceRunner([]))

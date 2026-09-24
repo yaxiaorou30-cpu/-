@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-08-25",
+  "updated_at": "2026-09-21",
   "robots_cache_ttl_seconds": 21600,
   "default_rule": {
     "id": "SRC-UNREGISTERED",
@@ -16,8 +16,6 @@
     "platform_rule_status": "待人工核对",
     "owner": "项目技术负责人（待指定姓名）",
     "last_rule_check": null,
-    "allowed_paths": [],
-    "allowed_path_prefixes": [],
     "denied_path_prefixes": []
   },
   "sources": [
@@ -33,9 +31,7 @@
       "platform_rule_status": "2026-08-23 已实测 RSS 连通、原文 URL 还原和当前 robots 路径；按 best-effort 来源使用",
       "owner": "项目技术负责人（待指定姓名）",
       "last_rule_check": "2026-08-23",
-      "allowed_paths": ["/news/search", "/robots.txt"],
-      "allowed_path_prefixes": [],
-      "denied_path_prefixes": []
+      "denied_path_prefixes": ["/account/", "/settings/", "/messages/", "/inbox/"]
     },
     {
       "id": "SRC-PUBLIC-BAIDU-QIANFAN",
@@ -52,8 +48,6 @@
       "platform_rule_status": "2026-08-25 已按官方 API 文档登记；真实接口结果待本机冒烟验证",
       "owner": "项目技术负责人（待指定姓名）",
       "last_rule_check": "2026-08-25",
-      "allowed_paths": ["/v2/ai_search/web_search"],
-      "allowed_path_prefixes": [],
       "denied_path_prefixes": []
     },
     {
@@ -68,8 +62,6 @@
       "platform_rule_status": "国家移民管理局公开要闻列表；2026-07-28 已核对连通、标题、日期和原文链接",
       "owner": "项目技术负责人（待指定姓名）",
       "last_rule_check": "2026-07-28",
-      "allowed_paths": [],
-      "allowed_path_prefixes": ["/n741435/n741517/", "/n897453/", "/robots.txt"],
       "denied_path_prefixes": []
     },
     {
@@ -84,8 +76,6 @@
       "platform_rule_status": "外交部公开新闻列表；2026-07-28 已核对连通、robots、日期和原文链接",
       "owner": "项目技术负责人（待指定姓名）",
       "last_rule_check": "2026-07-28",
-      "allowed_paths": [],
-      "allowed_path_prefixes": ["/web/wjbxw_new/", "/robots.txt"],
       "denied_path_prefixes": []
     },
     {
@@ -100,8 +90,6 @@
       "platform_rule_status": "应急管理部公开灾害事故列表；2026-07-28 已核对连通、日期和原文链接",
       "owner": "项目技术负责人（待指定姓名）",
       "last_rule_check": "2026-07-28",
-      "allowed_paths": [],
-      "allowed_path_prefixes": ["/xw/zhsgxx/", "/xw/yjglbgzdt/", "/xw/yjyw/", "/robots.txt"],
       "denied_path_prefixes": []
     },
     {
@@ -116,8 +104,6 @@
       "platform_rule_status": "天津政务网公开新闻发布会列表；2026-07-28 已核对连通、日期和原文链接",
       "owner": "项目技术负责人（待指定姓名）",
       "last_rule_check": "2026-07-28",
-      "allowed_paths": [],
-      "allowed_path_prefixes": ["/sy/xwfbh/xwfbh_210907/", "/robots.txt"],
       "denied_path_prefixes": []
     },
     {
@@ -132,8 +118,6 @@
       "platform_rule_status": "天津市公安局公安要闻和出入境通知；2026-07-28 已核对连通、日期和原文链接",
       "owner": "项目技术负责人（待指定姓名）",
       "last_rule_check": "2026-07-28",
-      "allowed_paths": [],
-      "allowed_path_prefixes": ["/gaxc/gayw/", "/xxfb/tztg/crj1/", "/robots.txt"],
       "denied_path_prefixes": []
     },
     {
@@ -148,8 +132,6 @@
       "platform_rule_status": "天津市应急管理局公开工作动态；2026-07-28 已核对连通、日期和原文链接",
       "owner": "项目技术负责人（待指定姓名）",
       "last_rule_check": "2026-07-28",
-      "allowed_paths": [],
-      "allowed_path_prefixes": ["/SY5239/bjdt/", "/robots.txt"],
       "denied_path_prefixes": []
     },
     {
@@ -159,13 +141,11 @@
       "access_type": "A0",
       "support_level": "S2",
       "automation_enabled": true,
-      "robots_required": false,
+      "robots_required": true,
       "external_adapter_allowed": false,
-      "platform_rule_status": "2026-08-27 已核对当前 robots；按项目需求不将其作为公开文章详情页的程序内阻断条件",
+      "platform_rule_status": "公开文章按实时 robots 动态判断；robots 明确禁止或无法读取时跳过",
       "owner": "项目技术负责人（待指定姓名）",
       "last_rule_check": "2026-08-27",
-      "allowed_paths": ["/s"],
-      "allowed_path_prefixes": [],
       "denied_path_prefixes": []
     },
     {
@@ -174,15 +154,12 @@
       "domains": ["baidu.com"],
       "access_type": "A0",
       "support_level": "S2",
-      "automation_enabled": false,
-      "automation_reason": "2026-07-26 核对发现 robots.txt 明确禁止自动访问 /s 搜索结果路径",
+      "automation_enabled": true,
       "robots_required": true,
       "external_adapter_allowed": false,
-      "platform_rule_status": "robots 路径边界已核对，搜索结果自动访问停用",
+      "platform_rule_status": "公开网页默认可尝试；按实时 robots 动态判断，私人路径本地拦截",
       "owner": "项目技术负责人（待指定姓名）",
       "last_rule_check": "2026-07-26",
-      "allowed_paths": [],
-      "allowed_path_prefixes": ["/s", "/robots.txt"],
       "denied_path_prefixes": ["/home/", "/user/"]
     },
     {
@@ -191,15 +168,12 @@
       "domains": ["sogou.com"],
       "access_type": "A0",
       "support_level": "S2",
-      "automation_enabled": false,
-      "automation_reason": "2026-07-26 核对发现 robots.txt 明确禁止自动访问 /news 与 /weixin 搜索路径",
+      "automation_enabled": true,
       "robots_required": true,
       "external_adapter_allowed": false,
-      "platform_rule_status": "robots 路径边界已核对，搜索结果自动访问停用",
+      "platform_rule_status": "公开网页默认可尝试；按实时 robots 动态判断，私人路径本地拦截",
       "owner": "项目技术负责人（待指定姓名）",
       "last_rule_check": "2026-07-26",
-      "allowed_paths": [],
-      "allowed_path_prefixes": ["/news", "/weixin", "/robots.txt"],
       "denied_path_prefixes": ["/web/account/"]
     },
     {
@@ -218,8 +192,6 @@
             "platform_rule_status": "当前使用操作者授权浏览器会话；crawl4weibo作为待验证替换候选；遇验证码或风控停止",
       "owner": "项目开发负责人",
       "last_rule_check": "2026-07-27",
-      "allowed_paths": ["/"],
-      "allowed_path_prefixes": ["/weibo", "/ajax/", "/detail/", "/robots.txt"],
       "denied_path_prefixes": ["/account/", "/setting/"]
     },
         {
@@ -238,8 +210,6 @@
             "platform_rule_status": "已确认使用操作者授权会话和 bilibili-cli 隔离只读适配器；遇验证码或风控停止",
       "owner": "项目开发负责人",
       "last_rule_check": "2026-07-27",
-      "allowed_paths": ["/"],
-      "allowed_path_prefixes": ["/all", "/video/", "/x/web-interface/nav", "/robots.txt"],
       "denied_path_prefixes": ["/account/", "/space/"]
     },
         {
@@ -258,8 +228,6 @@
             "platform_rule_status": "已确认仅使用操作者授权的普通浏览器会话；遇验证码或风控停止",
       "owner": "项目开发负责人",
       "last_rule_check": "2026-07-27",
-      "allowed_paths": ["/explore"],
-      "allowed_path_prefixes": ["/search_result", "/explore/", "/api/sns/web/v1/user/", "/robots.txt"],
       "denied_path_prefixes": ["/user/profile/", "/notification/"]
     },
     {
@@ -267,19 +235,16 @@
       "name": "抖音",
       "domains": ["douyin.com"],
       "access_type": "A1",
-      "support_level": "S0/S1-未准入",
-      "automation_enabled": false,
-      "automation_reason": "匿名公开自动搜索保持停用",
+      "support_level": "S1候选",
+      "automation_enabled": true,
       "robots_required": true,
       "authorized_session_enabled": true,
       "authorized_session_robots_required": false,
       "external_adapter_allowed": false,
       "external_adapter_robots_required": false,
-      "platform_rule_status": "已确认仅使用操作者授权会话；出现验证码或风控立即停止并转人工恢复",
+      "platform_rule_status": "公开页面默认可尝试；授权会话可用；出现验证码或风控立即停止并转人工恢复",
       "owner": "项目开发负责人",
       "last_rule_check": "2026-07-27",
-      "allowed_paths": ["/"],
-      "allowed_path_prefixes": ["/search/", "/robots.txt"],
       "denied_path_prefixes": []
     },
     {
@@ -297,8 +262,6 @@
       "platform_rule_status": "已确认使用操作者授权会话；aiotieba仅作详情增强，失败回退浏览器",
       "owner": "项目开发负责人",
       "last_rule_check": "2026-07-27",
-      "allowed_paths": ["/", "/index.html"],
-      "allowed_path_prefixes": ["/f/search/res", "/f/user/", "/p/", "/robots.txt"],
       "denied_path_prefixes": ["/home/", "/i/"]
     },
     {
@@ -313,8 +276,6 @@
       "platform_rule_status": "待人工核对",
       "owner": "项目技术负责人（待指定姓名）",
       "last_rule_check": null,
-      "allowed_paths": ["/"],
-      "allowed_path_prefixes": ["/search", "/api/v4/me", "/robots.txt"],
       "denied_path_prefixes": ["/settings/", "/inbox/"]
     },
     {
@@ -329,8 +290,6 @@
       "platform_rule_status": "待人工核对",
       "owner": "项目技术负责人（待指定姓名）",
       "last_rule_check": null,
-      "allowed_paths": ["/"],
-      "allowed_path_prefixes": ["/search", "/robots.txt"],
       "denied_path_prefixes": ["/accounts/", "/mine/"]
     },
     {
@@ -345,8 +304,6 @@
       "platform_rule_status": "待人工核对",
       "owner": "项目技术负责人（待指定姓名）",
       "last_rule_check": null,
-      "allowed_paths": ["/"],
-      "allowed_path_prefixes": ["/search/", "/short-video/", "/robots.txt"],
       "denied_path_prefixes": ["/profile/"]
     },
     {
@@ -361,8 +318,6 @@
       "platform_rule_status": "待人工核对",
       "owner": "项目技术负责人（待指定姓名）",
       "last_rule_check": null,
-      "allowed_paths": ["/"],
-      "allowed_path_prefixes": ["/search", "/robots.txt"],
       "denied_path_prefixes": ["/profile/", "/settings/"]
     },
     {
@@ -377,8 +332,6 @@
       "platform_rule_status": "待人工核对",
       "owner": "项目技术负责人（待指定姓名）",
       "last_rule_check": null,
-      "allowed_paths": ["/"],
-      "allowed_path_prefixes": ["/s/", "/robots.txt"],
       "denied_path_prefixes": ["/cgi-bin/"]
     }
   ]

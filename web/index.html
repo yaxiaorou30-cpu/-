@@ -232,6 +232,11 @@
                         <option value="60">每 60 分钟</option>
                       </select>
                     </label>
+                    <label class="field compact-field">
+                      <span>每日预览时间</span>
+                      <input id="monitorPreviewTime" type="time" value="18:00" />
+                      <small>只生成本地预览，不会自动调用 DeepSeek。</small>
+                    </label>
                     <button class="quiet-btn" id="monitorBtn" type="button">创建监测计划</button>
                   </div>
                 </details>
@@ -379,6 +384,50 @@
             </div>
 
             <section class="surface review-surface">
+              <div class="review-mode-tabs" role="tablist" aria-label="审核数据类型">
+                <button
+                  class="review-mode-tab active"
+                  id="reviewModeOnce"
+                  type="button"
+                  role="tab"
+                  aria-selected="true"
+                >一次性采集</button>
+                <button
+                  class="review-mode-tab"
+                  id="reviewModeMonitor"
+                  type="button"
+                  role="tab"
+                  aria-selected="false"
+                >持续监测</button>
+              </div>
+              <div class="monitor-review-controls hidden" id="monitorReviewControls">
+                <label>
+                  <span>监测计划</span>
+                  <select id="monitorReviewPlan" aria-label="选择持续监测计划"></select>
+                </label>
+                <label>
+                  <span>变化类型</span>
+                  <select id="monitorReviewChangeType">
+                    <option value="">首次、新增与更新</option>
+                    <option value="initial">首次发现</option>
+                    <option value="new">新增</option>
+                    <option value="updated">更新</option>
+                  </select>
+                </label>
+                <label>
+                  <span>审核进度</span>
+                  <select id="monitorReviewProgress">
+                    <option value="">全部进度</option>
+                    <option value="pending">待审核</option>
+                    <option value="reviewed">已审核</option>
+                  </select>
+                </label>
+                <div class="monitor-review-pagination" aria-label="监测数据翻页">
+                  <button class="secondary-btn" id="monitorReviewPrev" type="button">上一页</button>
+                  <span id="monitorReviewPageStatus" role="status">第 1 / 1 页</span>
+                  <button class="secondary-btn" id="monitorReviewNext" type="button">下一页</button>
+                </div>
+              </div>
               <div class="review-toolbar">
                 <div>
                   <strong>审核清单</strong>
@@ -421,7 +470,7 @@
                 <strong>操作方法</strong>
                 <span>当前来源、分类、情感和正文核查筛选会成为本次报告范围；取消“保留”会永久排除该线索，修改判断后需要保存。</span>
               </div>
-              <section class="summary-workbench" aria-labelledby="summaryWorkbenchTitle">
+              <section class="summary-workbench" id="summaryWorkbench" aria-labelledby="summaryWorkbenchTitle">
                 <div class="summary-workbench-header">
                   <div>
                     <strong id="summaryWorkbenchTitle">摘要助手</strong>
@@ -637,8 +686,8 @@
             <div class="page-lead monitor-page-lead">
               <div>
                 <span class="eyebrow">服务器端持续运行</span>
-                <h2>只把新出现的线索交给人工查看</h2>
-                <p>关闭页面或重启程序后，已启用的计划仍会恢复；首次运行只建立基线，之后才记录新增线索。</p>
+                <h2>累计保存首次、新增和更新线索</h2>
+                <p>关闭页面或重启程序后，已启用的计划仍会恢复；每轮完整结果保留，变化数据进入独立审核流程。</p>
               </div>
               <button class="secondary-btn" id="monitorRefreshBtn" type="button">刷新状态</button>
             </div>
@@ -649,7 +698,7 @@
                 <strong id="monitorPlanCount">0</strong>
               </article>
               <article class="surface monitor-metric">
-                <span>累计新增线索</span>
+                <span>累计监测线索</span>
                 <strong id="monitorNewCount">0</strong>
               </article>
               <article class="surface monitor-metric attention">

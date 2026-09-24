@@ -27,6 +27,7 @@ const els = {
   crawlBtn: document.getElementById("crawlBtn"),
   cancelCrawlBtn: document.getElementById("cancelCrawlBtn"),
   monitorInterval: document.getElementById("monitorInterval"),
+  monitorPreviewTime: document.getElementById("monitorPreviewTime"),
   monitorBtn: document.getElementById("monitorBtn"),
   monitorRefreshBtn: document.getElementById("monitorRefreshBtn"),
   monitorPlanList: document.getElementById("monitorPlanList"),
@@ -44,6 +45,16 @@ const els = {
   selectAllRows: document.getElementById("selectAllRows"),
   invertRows: document.getElementById("invertRows"),
   saveReviewBtn: document.getElementById("saveReviewBtn"),
+  reviewModeOnce: document.getElementById("reviewModeOnce"),
+  reviewModeMonitor: document.getElementById("reviewModeMonitor"),
+  monitorReviewControls: document.getElementById("monitorReviewControls"),
+  monitorReviewPlan: document.getElementById("monitorReviewPlan"),
+  monitorReviewChangeType: document.getElementById("monitorReviewChangeType"),
+  monitorReviewProgress: document.getElementById("monitorReviewProgress"),
+  monitorReviewPrev: document.getElementById("monitorReviewPrev"),
+  monitorReviewNext: document.getElementById("monitorReviewNext"),
+  monitorReviewPageStatus: document.getElementById("monitorReviewPageStatus"),
+  summaryWorkbench: document.getElementById("summaryWorkbench"),
   reviewSourceFilter: document.getElementById("reviewSourceFilter"),
   reviewCategoryFilter: document.getElementById("reviewCategoryFilter"),
   reviewSentimentFilter: document.getElementById("reviewSentimentFilter"),
@@ -160,6 +171,11 @@ const state = {
   monitorPlans: [],
   selectedMonitorId: null,
   monitorPoll: null,
+  reviewMode: "once",
+  monitorReview: null,
+  monitorReviewPage: 1,
+  monitorReviewPageSize: 50,
+  reportContext: { type: "once" },
   savedAccounts: {},
   siteSessions: {},
   reportDraft: null,
@@ -1596,6 +1612,7 @@ function renderTable(data) {
     const bodyFetchFailed = item.body_fetch_status === "failed";
     const bodyManuallyChecked = Boolean(item.body_manual_review?.reviewed_at);
     row.dataset.index = String(index);
+    row.dataset.recordId = item.monitoring?.record_id || "";
     row.dataset.platform = item.platform || item.source || "未知";
     row.dataset.category = item.content_category || "其他";
     row.dataset.sentiment = item.sentiment_label || "中性";
@@ -1646,6 +1663,27 @@ function renderTable(data) {
     contentExcerpt.className = "review-content-excerpt";
     contentExcerpt.textContent = String(item.content || "无正文摘要").replace(/\s+/g, " ").slice(0, 140);
     title.appendChild(contentExcerpt);
+    if (String(item.content || "").trim()) {
+      const fullContent = document.createElement("details");
+      fullContent.className = "review-full-content";
+      const fullContentSummary = document.createElement("summary");
+      fullContentSummary.textContent = "查看完整正文";
+      const fullContentText = document.createElement("p");
+      fullContentText.textContent = String(item.content || "");
+      fullContent.append(fullContentSummary, fullContentText);
+      title.appendChild(fullContent);
+    }
+
+    if (item.monitoring?.change_type) {
+      const changeBadge = document.createElement("span");
+      changeBadge.className = "monitor-change-badge";
+      changeBadge.textContent = {
+        initial: "首次发现",
+        new: "新增",
+        updated: `更新 · 第 ${item.monitoring.version || 1} 版`,
+      }[item.monitoring.change_type] || item.monitoring.change_type;
+      title.appendChild(changeBadge);
+    }
 
     if (bodyFetchFailed) {
       const bodyStatus = document.createElement("small");
@@ -1660,21 +1698,23 @@ function renderTable(data) {
       title.appendChild(bodyStatus);
     }
 
-    const rowActions = document.createElement("div");
-    rowActions.className = "review-row-actions";
-    const summarizeButton = document.createElement("button");
-    summarizeButton.className = "text-btn row-summary-btn";
-    summarizeButton.type = "button";
-    summarizeButton.textContent = "生成这条摘要";
-    summarizeButton.disabled = bodyFetchFailed && !bodyManuallyChecked;
-    if (summarizeButton.disabled) {
-      summarizeButton.title = "请先打开原文并完成人工核查";
+    if (state.reviewMode === "once") {
+      const rowActions = document.createElement("div");
+      rowActions.className = "review-row-actions";
+      const summarizeButton = document.createElement("button");
+      summarizeButton.className = "text-btn row-summary-btn";
+      summarizeButton.type = "button";
+      summarizeButton.textContent = "生成这条摘要";
+      summarizeButton.disabled = bodyFetchFailed && !bodyManuallyChecked;
+      if (summarizeButton.disabled) {
+        summarizeButton.title = "请先打开原文并完成人工核查";
+      }
+      summarizeButton.addEventListener("click", () => {
+        generateEvidenceSummary("record", index, summarizeButton);
+      });
+      rowActions.appendChild(summarizeButton);
+      title.appendChild(rowActions);
     }
-    summarizeButton.addEventListener("click", () => {
-      generateEvidenceSummary("record", index, summarizeButton);
-    });
-    rowActions.appendChild(summarizeButton);
-    title.appendChild(rowActions);
 
     const noteWrap = document.createElement("label");
     noteWrap.className = "review-note-wrap";
@@ -2011,11 +2051,22 @@ async function generateEvidenceSummary(scopeType, recordIndex = null, triggerBut
 }
 
 function currentReportFilter() {
+  if (state.reviewMode === "monitor" || state.reportContext?.type === "monitor") {
+    return { source: "", category: "", sentiment: "", review_status: "" };
+  }
   return {
     source: els.reviewSourceFilter?.value || "",
     category: els.reviewCategoryFilter?.value || "",
     sentiment: els.reviewSentimentFilter?.value || "",
     review_status: els.reviewStatusFilter?.value || "",
+  };
+}
+
+function reportContextPayload() {
+  if (state.reportContext?.type !== "monitor") return {};
+  return {
+    monitor_id: state.reportContext.monitor_id,
+    monitor_snapshot_id: state.reportContext.snapshot_id,
   };
 }
 
@@ -2038,6 +2089,12 @@ function reviewStatusLabel(value) {
 
 function updateReportScopeSummary(matchedTotal, originalTotal) {
   if (!els.reportScopeSummary || !els.reportScopeDetail) return;
+  if (state.reviewMode === "monitor" || state.reportContext?.type === "monitor") {
+    const review = state.monitorReview?.review || {};
+    els.reportScopeSummary.textContent = `持续监测累计数据：已审核 ${review.reviewed_count || 0} / ${review.record_count || 0} 条`;
+    els.reportScopeDetail.textContent = "生成预览时冻结截止当时的全部累计数据；之后采集的数据进入下一次预览。";
+    return;
+  }
   const parts = reportFilterDescription();
   if (parts.length) {
     els.reportScopeSummary.textContent = `使用 ${matchedTotal} / ${originalTotal} 条已审核数据`;
@@ -2079,7 +2136,99 @@ function renderLatest(latest) {
   updateMetrics(latest);
   renderSourceHealth((latest || {}).meta || {});
   renderHistory((latest || {}).history || []);
-  renderTable(latest.data || []);
+  if (state.reviewMode === "once") renderTable(latest.data || []);
+}
+
+function fillMonitorReviewPlans() {
+  const current = state.selectedMonitorId || els.monitorReviewPlan.value;
+  els.monitorReviewPlan.replaceChildren();
+  if (!state.monitorPlans.length) {
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = "暂无监测计划";
+    els.monitorReviewPlan.appendChild(option);
+    return;
+  }
+  state.monitorPlans.forEach((plan) => {
+    const option = document.createElement("option");
+    option.value = plan.id;
+    option.textContent = monitorTitle(plan);
+    option.selected = plan.id === current;
+    els.monitorReviewPlan.appendChild(option);
+  });
+  if (!els.monitorReviewPlan.value) els.monitorReviewPlan.value = state.monitorPlans[0].id;
+}
+
+function monitorReviewFilteredRecords() {
+  const data = state.monitorReview?.data || [];
+  const changeType = els.monitorReviewChangeType.value;
+  const progress = els.monitorReviewProgress.value;
+  return data.filter((item) => {
+    const monitoring = item.monitoring || {};
+    return (!changeType || monitoring.change_type === changeType)
+      && (!progress || monitoring.review_status === progress);
+  });
+}
+
+function renderMonitorReviewPage() {
+  const filtered = monitorReviewFilteredRecords();
+  const pageSize = state.monitorReviewPageSize;
+  const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
+  state.monitorReviewPage = Math.min(Math.max(state.monitorReviewPage, 1), pageCount);
+  const start = (state.monitorReviewPage - 1) * pageSize;
+  renderTable(filtered.slice(start, start + pageSize));
+  els.monitorReviewPageStatus.textContent = `第 ${state.monitorReviewPage} / ${pageCount} 页 · 共 ${filtered.length} 条`;
+  els.monitorReviewPrev.disabled = state.monitorReviewPage <= 1;
+  els.monitorReviewNext.disabled = state.monitorReviewPage >= pageCount;
+  els.dataPath.textContent = state.monitorReview?.data_path || "data/monitoring";
+  els.dataDownload.href = `/download?path=${encodeURIComponent(state.monitorReview?.data_path || "")}`;
+  const review = state.monitorReview?.review || {};
+  els.reviewVisibleCount.textContent = `待审核 ${review.pending_count || 0} · 已审核 ${review.reviewed_count || 0}`;
+  updateReportScopeSummary(Number(review.reviewed_count || 0), Number(review.record_count || 0));
+}
+
+async function loadMonitorReview(monitorId = els.monitorReviewPlan.value || state.selectedMonitorId) {
+  if (!monitorId) {
+    state.monitorReview = null;
+    renderTable([]);
+    renderMonitorReviewPage();
+    return;
+  }
+  const result = await requestJson(`/api/monitors/review?id=${encodeURIComponent(monitorId)}`);
+  state.selectedMonitorId = monitorId;
+  state.monitorReview = result;
+  state.monitorReviewPage = 1;
+  fillMonitorReviewPlans();
+  els.monitorReviewPlan.value = monitorId;
+  renderMonitorReviewPage();
+}
+
+async function switchReviewMode(mode) {
+  state.reviewMode = mode === "monitor" ? "monitor" : "once";
+  const monitoring = state.reviewMode === "monitor";
+  els.reviewSourceFilter.value = "";
+  els.reviewCategoryFilter.value = "";
+  els.reviewSentimentFilter.value = "";
+  els.reviewStatusFilter.value = "";
+  els.reviewModeOnce.classList.toggle("active", !monitoring);
+  els.reviewModeMonitor.classList.toggle("active", monitoring);
+  els.reviewModeOnce.setAttribute("aria-selected", String(!monitoring));
+  els.reviewModeMonitor.setAttribute("aria-selected", String(monitoring));
+  els.monitorReviewControls.classList.toggle("hidden", !monitoring);
+  els.summaryWorkbench.classList.toggle("hidden", monitoring);
+  els.dataDownload.textContent = monitoring ? "下载监测累计数据" : "下载原始数据";
+  state.reportContext = monitoring ? { type: "monitor" } : { type: "once" };
+  renderReportPreview(null);
+  els.reportDownload.classList.add("hidden");
+  if (monitoring) {
+    if (!state.monitorPlans.length) await loadMonitors();
+    fillMonitorReviewPlans();
+    await loadMonitorReview();
+  } else {
+    els.dataPath.textContent = state.latest?.data_path || "data/latest_news.json";
+    els.dataDownload.href = "/download?path=data/latest_news.json";
+    renderTable(state.latest?.data || []);
+  }
 }
 
 const AI_FIELD_COPY = {
@@ -2200,7 +2349,9 @@ async function generateAiReportDraft() {
 
   state.aiRequestPending = true;
   const aiTaskId = state.latest?.meta?.task_id || state.taskId;
-  if (aiTaskId) startTaskPolling(aiTaskId, { aiOnly: true });
+  if (aiTaskId && state.reportContext?.type !== "monitor") {
+    startTaskPolling(aiTaskId, { aiOnly: true });
+  }
   delete state.aiDisclosure.confirmation_id;
   els.aiGenerateBtn.disabled = true;
   els.aiExternalSendConfirm.checked = false;
@@ -2211,6 +2362,7 @@ async function generateAiReportDraft() {
     const result = await requestJson("/api/report-ai-draft", {
       method: "POST",
       body: JSON.stringify({
+        ...reportContextPayload(),
         template_id: els.templateSelect.value,
         region: els.region.value.trim(),
         time_range: selectedTimeRange(),
@@ -2407,29 +2559,44 @@ async function refreshLatest() {
 }
 
 async function previewReport() {
-  const review = state.latest?.meta?.review || {};
-  const reviewedCurrentData = review.reviewed_at
-    && review.labels_confirmed
-    && Number(review.kept_total) === Number(state.latest?.total || 0);
+  const monitoring = state.reviewMode === "monitor";
+  const review = monitoring ? (state.monitorReview?.review || {}) : (state.latest?.meta?.review || {});
+  const reviewedCurrentData = monitoring
+    ? Number(review.pending_count || 0) === 0 && Number(review.record_count || 0) > 0
+    : review.reviewed_at
+      && review.labels_confirmed
+      && Number(review.kept_total) === Number(state.latest?.total || 0);
   if (!reviewedCurrentData) {
     activateView("review");
     setStatus("等待人工审核", "error");
-    addLog("请先逐条核对原文、内容分类和情感标签并保存审核结果，再生成报告预览");
+    addLog(monitoring
+      ? `还有 ${review.pending_count || 0} 条监测数据待审核，请先保存审核结果`
+      : "请先逐条核对原文、内容分类和情感标签并保存审核结果，再生成报告预览");
     return;
   }
   setBusy(true);
   setStatus("生成预览中", "busy");
   addLog("开始生成报告预览");
   try {
-    const result = await requestJson("/api/report-preview", {
+    const result = await requestJson(monitoring ? "/api/monitors/report-preview" : "/api/report-preview", {
       method: "POST",
-      body: JSON.stringify({
+      body: JSON.stringify(monitoring ? {
+        monitor_id: state.selectedMonitorId,
+        template_id: els.templateSelect.value,
+      } : {
         template_id: els.templateSelect.value,
         region: els.region.value.trim(),
         time_range: selectedTimeRange(),
         report_filter: currentReportFilter(),
       }),
     });
+    state.reportContext = monitoring
+      ? {
+        type: "monitor",
+        monitor_id: state.selectedMonitorId,
+        snapshot_id: result.summary?.snapshot_id || result.preview?.monitoring?.snapshot_id,
+      }
+      : { type: "once" };
     renderReportPreview(result.preview);
     setStatus("预览完成");
     addLog(result.message || "报告预览已生成");
@@ -2843,8 +3010,9 @@ async function testAllAccounts() {
 }
 
 async function generateReport() {
+  const monitoring = state.reportContext?.type === "monitor";
   const review = state.latest?.meta?.review || {};
-  const reviewedCurrentData = review.reviewed_at
+  const reviewedCurrentData = monitoring || review.reviewed_at
     && review.labels_confirmed
     && Number(review.kept_total) === Number(state.latest?.total || 0);
   if (!reviewedCurrentData) {
@@ -2878,6 +3046,7 @@ async function generateReport() {
     const result = await requestJson("/api/report", {
       method: "POST",
       body: JSON.stringify({
+        ...reportContextPayload(),
         template_id: els.templateSelect.value,
         region: els.region.value.trim(),
         time_range: selectedTimeRange(),
@@ -2903,6 +3072,7 @@ async function generateReport() {
 }
 
 async function saveReview() {
+  const monitoring = state.reviewMode === "monitor";
   const rows = [...els.resultBody.querySelectorAll("tr[data-index]")];
   if (!rows.length) {
     setStatus("没有可审核数据", "error");
@@ -2911,6 +3081,7 @@ async function saveReview() {
   }
   const reviews = rows.map((row) => ({
     index: Number(row.dataset.index),
+    record_id: row.dataset.recordId || "",
     keep: Boolean(row.querySelector(".review-check")?.checked),
     content_category: row.querySelector(".review-category")?.value || "其他",
     sentiment_label: row.querySelector(".review-sentiment")?.value || "中性",
@@ -2921,19 +3092,31 @@ async function saveReview() {
   setBusy(true);
   setStatus("保存审核中", "busy");
   try {
-    const result = await requestJson("/api/review-save", {
+    const result = await requestJson(monitoring ? "/api/monitors/review" : "/api/review-save", {
       method: "POST",
-      body: JSON.stringify({ reviews }),
+      body: JSON.stringify(monitoring
+        ? { monitor_id: state.selectedMonitorId, reviews }
+        : { reviews }),
     });
-    renderLatest(result.latest);
+    if (monitoring) {
+      state.monitorReview = result;
+      renderMonitorReviewPage();
+      await loadMonitors(state.selectedMonitorId);
+    } else {
+      renderLatest(result.latest);
+    }
     renderReportPreview(null);
     els.reportDownload.classList.add("hidden");
     setStatus("审核已保存");
-    const summary = result.latest?.meta?.review || {};
-    addLog(
-      `审核已保存，保留 ${keptCount} 条；修改分类 ${summary.category_changed_count || 0} 条，`
-      + `修改情感 ${summary.sentiment_changed_count || 0} 条`,
-    );
+    if (monitoring) {
+      addLog(result.message || `监测审核已保存，本页保留 ${keptCount} 条`);
+    } else {
+      const summary = result.latest?.meta?.review || {};
+      addLog(
+        `审核已保存，保留 ${keptCount} 条；修改分类 ${summary.category_changed_count || 0} 条，`
+        + `修改情感 ${summary.sentiment_changed_count || 0} 条`,
+      );
+    }
   } catch (error) {
     setStatus("审核失败", "error");
     addLog(error.message);
@@ -2984,12 +3167,12 @@ function monitorMetaText(plan = {}) {
     ((strategy === "all" || strategy === "stable") ? (payload.stable_sources || []).length : 0)
     + ((strategy === "all" || strategy === "public_news") ? (payload.public_news_sources || []).length : 0)
     + ((strategy === "all" || strategy === "social") ? (payload.social_platforms || []).length : 0);
-  return `每 ${plan.interval_minutes || "-"} 分钟 · ${sourceCount} 个来源 · 累计新增 ${plan.total_new || 0} 条`;
+  return `每 ${plan.interval_minutes || "-"} 分钟 · ${sourceCount} 个来源 · 累计 ${plan.record_count || 0} 条`;
 }
 
 function renderMonitorMetrics(plans = []) {
   const active = plans.filter((plan) => plan.status === "active").length;
-  const newCount = plans.reduce((sum, plan) => sum + Number(plan.total_new || 0), 0);
+  const newCount = plans.reduce((sum, plan) => sum + Number(plan.record_count || 0), 0);
   const attention = plans.filter((plan) => plan.runtime_status === "needs_attention").length;
   els.monitorPlanCount.textContent = String(active);
   els.monitorNewCount.textContent = String(newCount);
@@ -3051,6 +3234,20 @@ function appendMonitorFact(root, labelText, valueText) {
 function buildMonitorActions(plan) {
   const actions = document.createElement("div");
   actions.className = "monitor-actions";
+  const review = document.createElement("button");
+  review.type = "button";
+  review.className = "primary-btn";
+  review.dataset.monitorUiAction = "review";
+  review.textContent = `审核数据（待审 ${plan.review?.pending_count || 0}）`;
+  actions.appendChild(review);
+  if (plan.latest_preview?.status === "ready") {
+    const preview = document.createElement("button");
+    preview.type = "button";
+    preview.className = "secondary-btn";
+    preview.dataset.monitorUiAction = "preview";
+    preview.textContent = "查看最新预览";
+    actions.appendChild(preview);
+  }
   if (plan.status !== "stopped") {
     const run = document.createElement("button");
     run.type = "button";
@@ -3163,7 +3360,7 @@ function renderMonitorRuns(root, runs = []) {
       const message = document.createElement("strong");
       message.textContent = run.message || "运行完成";
       const meta = document.createElement("small");
-      meta.textContent = `${formatMonitorTime(run.completed_at)} · 取得 ${run.records_found || 0} 条 · 新增 ${run.new_count || 0} 条`;
+      meta.textContent = `${formatMonitorTime(run.completed_at)} · 取得 ${run.records_found || 0} 条 · 新增/首次 ${run.new_count || 0} 条 · 更新 ${run.updated_count || 0} 条`;
       body.append(message, meta);
       item.append(marker, body);
       list.appendChild(item);
@@ -3209,7 +3406,16 @@ function renderMonitorDetail(plan) {
   appendMonitorFact(facts, "上次完成", formatMonitorTime(plan.last_completed_at));
   appendMonitorFact(facts, "下次运行", plan.status === "active" ? formatMonitorTime(plan.next_run_at) : "不会自动运行");
   appendMonitorFact(facts, "连续失败", `${plan.consecutive_failures || 0} 次`);
-  appendMonitorFact(facts, "基线记录", `${plan.known_fingerprint_count || 0} 条`);
+  appendMonitorFact(facts, "累计记录", `${plan.record_count || 0} 条`);
+  appendMonitorFact(facts, "待审核", `${plan.review?.pending_count || 0} 条`);
+  appendMonitorFact(facts, "每日预览", `${plan.daily_preview_time || "18:00"} · 下次 ${formatMonitorTime(plan.next_preview_at)}`);
+  const previewStatus = {
+    ready: `已生成 · 截止 ${formatMonitorTime(plan.latest_preview?.cutoff_at)}`,
+    waiting_review: plan.latest_preview?.message || "等待数据审核",
+    failure: "生成失败",
+    late: "已错过本次时间",
+  }[plan.latest_preview?.status] || "尚未生成";
+  appendMonitorFact(facts, "最新预览", previewStatus);
   els.monitorDetail.appendChild(facts);
 
   const payload = plan.payload || {};
@@ -3219,6 +3425,28 @@ function renderMonitorDetail(plan) {
   els.monitorDetail.appendChild(conditions);
   renderMonitorClues(els.monitorDetail, plan.new_items || []);
   renderMonitorRuns(els.monitorDetail, plan.runs || []);
+}
+
+async function openLatestMonitorPreview() {
+  if (!state.selectedMonitorId) return;
+  setStatus("载入监测预览中", "busy");
+  try {
+    const result = await requestJson(
+      `/api/monitors/report-preview?id=${encodeURIComponent(state.selectedMonitorId)}`,
+    );
+    state.reportContext = {
+      type: "monitor",
+      monitor_id: state.selectedMonitorId,
+      snapshot_id: result.summary?.snapshot_id,
+    };
+    renderReportPreview(result.preview);
+    activateView("report");
+    setStatus("监测预览已载入");
+    addLog(result.message || "已载入监测报告预览");
+  } catch (error) {
+    setStatus("预览载入失败", "error");
+    addLog(error.message);
+  }
 }
 
 async function loadMonitors(preferredId = state.selectedMonitorId) {
@@ -3236,6 +3464,7 @@ async function loadMonitors(preferredId = state.selectedMonitorId) {
   renderMonitorMetrics(state.monitorPlans);
   renderMonitorPlans(state.monitorPlans);
   renderMonitorDetail(result.selected || null);
+  fillMonitorReviewPlans();
   return result;
 }
 
@@ -3254,7 +3483,11 @@ async function createMonitorPlan() {
   try {
     const result = await requestJson("/api/monitors/create", {
       method: "POST",
-      body: JSON.stringify({ interval_minutes: interval, payload: collectPayload() }),
+      body: JSON.stringify({
+        interval_minutes: interval,
+        daily_preview_time: els.monitorPreviewTime.value || "18:00",
+        payload: collectPayload(),
+      }),
     });
     state.selectedMonitorId = result.plan?.id || null;
     await loadMonitors(state.selectedMonitorId);
@@ -3332,6 +3565,31 @@ els.summaryFilteredBtn.addEventListener("click", () => generateEvidenceSummary("
 els.saveReviewBtn.addEventListener("click", saveReview);
 els.selectAllRows.addEventListener("click", () => setRowChecks("all"));
 els.invertRows.addEventListener("click", () => setRowChecks("invert"));
+els.reviewModeOnce.addEventListener("click", () => {
+  switchReviewMode("once").catch((error) => addLog(error.message));
+});
+els.reviewModeMonitor.addEventListener("click", () => {
+  switchReviewMode("monitor").catch((error) => addLog(error.message));
+});
+els.monitorReviewPlan.addEventListener("change", () => {
+  loadMonitorReview(els.monitorReviewPlan.value).catch((error) => addLog(error.message));
+});
+els.monitorReviewChangeType.addEventListener("change", () => {
+  state.monitorReviewPage = 1;
+  renderMonitorReviewPage();
+});
+els.monitorReviewProgress.addEventListener("change", () => {
+  state.monitorReviewPage = 1;
+  renderMonitorReviewPage();
+});
+els.monitorReviewPrev.addEventListener("click", () => {
+  state.monitorReviewPage -= 1;
+  renderMonitorReviewPage();
+});
+els.monitorReviewNext.addEventListener("click", () => {
+  state.monitorReviewPage += 1;
+  renderMonitorReviewPage();
+});
 els.reviewSourceFilter.addEventListener("change", () => {
   applyReviewFilters();
   clearEvidenceSummary();
@@ -3377,6 +3635,17 @@ els.monitorPlanList.addEventListener("click", (event) => {
   loadMonitors(state.selectedMonitorId).catch((error) => addLog(error.message));
 });
 els.monitorDetail.addEventListener("click", (event) => {
+  const uiButton = event.target.closest("[data-monitor-ui-action]");
+  if (uiButton?.dataset.monitorUiAction === "review") {
+    switchReviewMode("monitor")
+      .then(() => activateView("review"))
+      .catch((error) => addLog(error.message));
+    return;
+  }
+  if (uiButton?.dataset.monitorUiAction === "preview") {
+    openLatestMonitorPreview();
+    return;
+  }
   const button = event.target.closest("[data-monitor-action]");
   if (!button) return;
   runMonitorAction(button.dataset.monitorAction);

@@ -17,6 +17,7 @@ import socket
 import threading
 import uuid
 import webbrowser
+from copy import deepcopy
 from datetime import datetime
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
@@ -1336,6 +1337,105 @@ def run_monitor_crawl(
     }
 
 
+def build_monitor_review_payload(monitor_id: str) -> dict:
+    manager = get_monitor_manager()
+    plan = manager.get_plan(monitor_id)
+    records = annotate_records(manager.get_records(monitor_id))
+    return {
+        "data": records,
+        "total": len(records),
+        "plan": plan,
+        "review": plan.get("review") or {},
+        "data_path": relative_to_root(
+            manager.data_root / str(monitor_id) / "records.json"
+        ),
+    }
+
+
+def create_monitor_report_preview(
+    monitor_id: str,
+    *,
+    cutoff_at: str | None = None,
+    automatic: bool = False,
+    template_id: str = "event_report",
+) -> dict:
+    """Freeze reviewed monitoring data, then build a local rule preview only."""
+    manager = get_monitor_manager()
+    snapshot = manager.create_report_snapshot(monitor_id, cutoff_at=cutoff_at)
+    plan = manager.get_plan(monitor_id)
+    payload = plan.get("payload") or {}
+    records = snapshot.get("records") or []
+    report_scope = {
+        "filters": {},
+        "active": False,
+        "original_total": len(records),
+        "matched_total": len(records),
+    }
+    scoped_meta = {**(snapshot.get("meta") or {}), "report_scope": report_scope}
+    from src.orchestrator import build_report_preview
+
+    preview = build_report_preview(
+        input_json=str(manager.data_root / str(monitor_id) / "records.json"),
+        template_id=str(template_id or "event_report").strip(),
+        region=str(payload.get("region") or "").strip() or None,
+        time_range=payload.get("time_range") or None,
+        raw_data_override=records,
+        meta_override=scoped_meta,
+    )
+    preview["scope"] = report_scope
+    preview["monitoring"] = {
+        "monitor_id": str(monitor_id),
+        "snapshot_id": snapshot["snapshot_id"],
+        "cutoff_at": snapshot["cutoff_at"],
+        "record_count": len(records),
+        "automatic": bool(automatic),
+    }
+    summary = manager.save_report_preview(
+        monitor_id,
+        snapshot["snapshot_id"],
+        preview,
+        automatic=automatic,
+    )
+    return {"preview": preview, "summary": summary, "snapshot": snapshot}
+
+
+def run_monitor_report_preview(monitor_id: str, cutoff_at: str) -> dict:
+    return create_monitor_report_preview(
+        monitor_id,
+        cutoff_at=cutoff_at,
+        automatic=True,
+    )["summary"]
+
+
+def load_monitor_report_context(payload: dict) -> dict | None:
+    monitor_id = str((payload or {}).get("monitor_id") or "").strip()
+    if not monitor_id:
+        return None
+    snapshot_id = str((payload or {}).get("monitor_snapshot_id") or "").strip()
+    if not snapshot_id:
+        raise ValueError("监测报告快照已失效，请重新生成预览")
+    manager = get_monitor_manager()
+    snapshot = manager.get_report_snapshot(monitor_id, snapshot_id)
+    plan = manager.get_plan(monitor_id)
+    records = snapshot.get("records") or []
+    report_scope = {
+        "filters": {},
+        "active": False,
+        "original_total": len(records),
+        "matched_total": len(records),
+    }
+    return {
+        "monitor_id": monitor_id,
+        "snapshot_id": snapshot_id,
+        "records": records,
+        "meta": {**(snapshot.get("meta") or {}), "report_scope": report_scope},
+        "scope": report_scope,
+        "input_json": str(manager.data_root / monitor_id / "records.json"),
+        "plan": plan,
+        "cutoff_at": snapshot.get("cutoff_at"),
+    }
+
+
 def get_monitor_manager() -> MonitorManager:
     global MONITOR_MANAGER
     if MONITOR_MANAGER is None:
@@ -1344,6 +1444,7 @@ def get_monitor_manager() -> MonitorManager:
             ROOT / "data" / "monitoring",
             run_monitor_crawl,
             crawl_lock=CRAWL_EXECUTION_LOCK,
+            preview_runner=run_monitor_report_preview,
         )
     return MONITOR_MANAGER
 
@@ -1672,6 +1773,12 @@ class WebUIHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/monitors":
             self.handle_monitors(parsed.query)
             return
+        if parsed.path == "/api/monitors/review":
+            self.handle_monitor_review(parsed.query)
+            return
+        if parsed.path == "/api/monitors/report-preview":
+            self.handle_monitor_report_preview_get(parsed.query)
+            return
         if parsed.path == "/download":
             self.send_download(parsed.query)
             return
@@ -1710,6 +1817,12 @@ class WebUIHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/api/monitors/action":
             self.handle_monitor_action()
+            return
+        if parsed.path == "/api/monitors/review":
+            self.handle_monitor_review_save()
+            return
+        if parsed.path == "/api/monitors/report-preview":
+            self.handle_monitor_report_preview()
             return
         if parsed.path == "/api/test-account":
             self.handle_test_account()
@@ -2358,19 +2471,135 @@ class WebUIHandler(BaseHTTPRequestHandler):
         except KeyError as exc:
             self.send_json({"ok": False, "message": str(exc.args[0])}, status=404)
 
+    def handle_monitor_review(self, query: str):
+        monitor_id = (parse_qs(query).get("id") or [""])[0]
+        try:
+            if not monitor_id:
+                raise ValueError("请选择一个持续监测计划")
+            self.send_json({"ok": True, **build_monitor_review_payload(monitor_id)})
+        except KeyError as exc:
+            self.send_json({"ok": False, "message": str(exc.args[0])}, status=404)
+        except ValueError as exc:
+            self.send_json({"ok": False, "message": str(exc)}, status=400)
+        except Exception as exc:
+            self.send_json({"ok": False, "message": str(exc)}, status=500)
+
+    def _monitor_preview_response(self, monitor_id: str, snapshot_id: str) -> dict:
+        manager = get_monitor_manager()
+        stored = manager.get_report_preview(monitor_id, snapshot_id)
+        snapshot = manager.get_report_snapshot(monitor_id, stored["snapshot_id"])
+        preview = deepcopy(stored.get("preview") or {})
+        records = snapshot.get("records") or []
+        ai_status = deepseek_configuration_status()
+        disclosure = build_ai_report_disclosure(
+            records,
+            preview,
+            configured=ai_status["configured"],
+            model=ai_status["model"],
+            input_budget_tokens=ai_status.get("input_budget_tokens", 128_000),
+        )
+        disclosure["confirmation_id"] = (
+            AI_CONFIRMATION_STORE.issue(
+                disclosure["scope_token"],
+                self.cookie_value(SYSTEM_SESSION_COOKIE),
+            )
+            if disclosure["can_generate"]
+            else ""
+        )
+        disclosure["configuration_error"] = ai_status.get("configuration_error", "")
+        preview["ai_assistance"] = disclosure
+        return {
+            "preview": preview,
+            "summary": {
+                key: value for key, value in stored.items() if key != "preview"
+            },
+        }
+
+    def handle_monitor_report_preview_get(self, query: str):
+        params = parse_qs(query)
+        monitor_id = (params.get("id") or [""])[0]
+        snapshot_id = (params.get("snapshot_id") or [""])[0]
+        try:
+            if not monitor_id:
+                raise ValueError("请选择一个持续监测计划")
+            result = self._monitor_preview_response(monitor_id, snapshot_id)
+            self.send_json({"ok": True, "message": "已载入监测报告预览", **result})
+        except KeyError as exc:
+            self.send_json({"ok": False, "message": str(exc.args[0])}, status=404)
+        except ValueError as exc:
+            self.send_json({"ok": False, "message": str(exc)}, status=400)
+        except Exception as exc:
+            self.send_json({"ok": False, "message": str(exc)}, status=500)
+
     def handle_monitor_create(self):
         try:
             request = self.read_body_json(max_bytes=256 * 1024)
             plan = get_monitor_manager().create_plan(
                 normalize_public_news_selection(request.get("payload") or {}),
                 request.get("interval_minutes"),
+                daily_preview_time=request.get("daily_preview_time") or "18:00",
             )
             self.send_json({
                 "ok": True,
-                "message": "监测计划已创建，首次运行将自动建立基线",
+                "message": "监测计划已创建，首次结果将进入审核",
                 "plan": plan,
                 "plans": get_monitor_manager().list_plans(),
             })
+        except (ValueError, TypeError) as exc:
+            self.send_json({"ok": False, "message": str(exc)}, status=400)
+        except Exception as exc:
+            self.send_json({"ok": False, "message": str(exc)}, status=500)
+
+    def handle_monitor_review_save(self):
+        try:
+            request = self.read_body_json(max_bytes=2 * 1024 * 1024)
+            monitor_id = str(request.get("monitor_id") or "").strip()
+            identity = self.current_identity(touch=False) or {}
+            summary = get_monitor_manager().save_reviews(
+                monitor_id,
+                request.get("reviews"),
+                reviewer=str(identity.get("username") or ""),
+            )
+            self.send_json({
+                "ok": True,
+                "message": (
+                    f"监测审核已保存：已审核 {summary['reviewed_count']} 条，"
+                    f"待审核 {summary['pending_count']} 条"
+                ),
+                **build_monitor_review_payload(monitor_id),
+            })
+        except KeyError as exc:
+            self.send_json({"ok": False, "message": str(exc.args[0])}, status=404)
+        except (ValueError, TypeError) as exc:
+            self.send_json({"ok": False, "message": str(exc)}, status=400)
+        except Exception as exc:
+            self.send_json({"ok": False, "message": str(exc)}, status=500)
+
+    def handle_monitor_report_preview(self):
+        try:
+            request = self.read_body_json(max_bytes=32 * 1024)
+            monitor_id = str(request.get("monitor_id") or "").strip()
+            if not monitor_id:
+                raise ValueError("请选择一个持续监测计划")
+            created = create_monitor_report_preview(
+                monitor_id,
+                automatic=False,
+                template_id=request.get("template_id") or "event_report",
+            )
+            result = self._monitor_preview_response(
+                monitor_id,
+                created["summary"]["snapshot_id"],
+            )
+            self.send_json({
+                "ok": True,
+                "message": (
+                    f"监测报告预览已生成，截止 {created['summary']['cutoff_at']}，"
+                    f"使用 {created['summary']['record_count']} 条已审核数据"
+                ),
+                **result,
+            })
+        except KeyError as exc:
+            self.send_json({"ok": False, "message": str(exc.args[0])}, status=404)
         except (ValueError, TypeError) as exc:
             self.send_json({"ok": False, "message": str(exc)}, status=400)
         except Exception as exc:
@@ -2685,37 +2914,49 @@ class WebUIHandler(BaseHTTPRequestHandler):
                 self.cookie_value(SYSTEM_SESSION_COOKIE),
             )
             template_id = str(payload.get("template_id") or "event_report").strip()
-            if not DATA_FILE.exists():
-                raise FileNotFoundError("还没有采集数据，请先完成采集和人工审核")
-
-            current_data = read_json(DATA_FILE, [])
-            current_meta = read_json(META_FILE, {})
-            if not review_is_complete(current_data, current_meta):
-                raise ValueError("当前数据尚未完成人工审核，不能发送给第三方 AI")
-            ai_task_id = str(current_meta.get("task_id") or "").strip()
-            if ai_task_id:
-                with TASK_LOCK:
-                    TASKS.setdefault(ai_task_id, {
-                        "task_id": ai_task_id,
-                        "status": "done",
-                        "message": "采集已完成",
-                        "created_at": str(current_meta.get("started_at") or ""),
-                        "completed_at": str(current_meta.get("generated_at") or ""),
-                        "events": [],
-                        "payload": current_meta.get("task_payload") or {},
-                    })
-            report_data, report_scope = filter_report_records(
-                current_data,
-                payload.get("report_filter"),
-            )
-            scoped_meta = {**current_meta, "report_scope": report_scope}
+            monitor_context = load_monitor_report_context(payload)
+            if monitor_context:
+                report_data = monitor_context["records"]
+                report_scope = monitor_context["scope"]
+                scoped_meta = monitor_context["meta"]
+                input_json = monitor_context["input_json"]
+                plan_payload = monitor_context["plan"].get("payload") or {}
+                report_region = str(plan_payload.get("region") or "").strip() or None
+                report_time_range = plan_payload.get("time_range") or None
+            else:
+                if not DATA_FILE.exists():
+                    raise FileNotFoundError("还没有采集数据，请先完成采集和人工审核")
+                current_data = read_json(DATA_FILE, [])
+                current_meta = read_json(META_FILE, {})
+                if not review_is_complete(current_data, current_meta):
+                    raise ValueError("当前数据尚未完成人工审核，不能发送给第三方 AI")
+                ai_task_id = str(current_meta.get("task_id") or "").strip()
+                if ai_task_id:
+                    with TASK_LOCK:
+                        TASKS.setdefault(ai_task_id, {
+                            "task_id": ai_task_id,
+                            "status": "done",
+                            "message": "采集已完成",
+                            "created_at": str(current_meta.get("started_at") or ""),
+                            "completed_at": str(current_meta.get("generated_at") or ""),
+                            "events": [],
+                            "payload": current_meta.get("task_payload") or {},
+                        })
+                report_data, report_scope = filter_report_records(
+                    current_data,
+                    payload.get("report_filter"),
+                )
+                scoped_meta = {**current_meta, "report_scope": report_scope}
+                input_json = str(DATA_FILE)
+                report_region = str(payload.get("region") or "").strip() or None
+                report_time_range = payload.get("time_range") or None
             from src.orchestrator import build_report_preview
 
             preview = build_report_preview(
-                input_json=str(DATA_FILE),
+                input_json=input_json,
                 template_id=template_id,
-                region=str(payload.get("region") or "").strip() or None,
-                time_range=payload.get("time_range") or None,
+                region=report_region,
+                time_range=report_time_range,
                 raw_data_override=report_data,
                 meta_override=scoped_meta,
             )
@@ -2812,21 +3053,32 @@ class WebUIHandler(BaseHTTPRequestHandler):
             section_overrides = payload.get("section_overrides") or {}
             if not isinstance(section_overrides, dict):
                 raise ValueError("报告修改内容格式无效")
-            if not DATA_FILE.exists():
-                raise FileNotFoundError("还没有采集数据，请先采集或准备 data/latest_news.json")
-            task_id = update_current_history_archive()
-            if not task_id:
-                raise ValueError("当前任务无法建立历史归档，请先重新采集")
-
-            current_data = read_json(DATA_FILE, [])
-            current_meta = read_json(META_FILE, {})
-            if not review_is_complete(current_data, current_meta):
-                raise ValueError("当前数据尚未完成分类与情感人工审核，请先到“数据审核”保存审核结果")
-            report_data, report_scope = filter_report_records(
-                current_data,
-                payload.get("report_filter"),
-            )
-            scoped_meta = {**current_meta, "report_scope": report_scope}
+            monitor_context = load_monitor_report_context(payload)
+            if monitor_context:
+                task_id = ""
+                report_data = monitor_context["records"]
+                report_scope = monitor_context["scope"]
+                scoped_meta = monitor_context["meta"]
+                input_json = monitor_context["input_json"]
+                plan_payload = monitor_context["plan"].get("payload") or {}
+                region = str(plan_payload.get("region") or "").strip() or None
+                time_range = plan_payload.get("time_range") or None
+            else:
+                if not DATA_FILE.exists():
+                    raise FileNotFoundError("还没有采集数据，请先采集或准备 data/latest_news.json")
+                task_id = update_current_history_archive()
+                if not task_id:
+                    raise ValueError("当前任务无法建立历史归档，请先重新采集")
+                current_data = read_json(DATA_FILE, [])
+                current_meta = read_json(META_FILE, {})
+                if not review_is_complete(current_data, current_meta):
+                    raise ValueError("当前数据尚未完成分类与情感人工审核，请先到“数据审核”保存审核结果")
+                report_data, report_scope = filter_report_records(
+                    current_data,
+                    payload.get("report_filter"),
+                )
+                scoped_meta = {**current_meta, "report_scope": report_scope}
+                input_json = str(DATA_FILE)
             validate_ai_report_export_scope(
                 report_data,
                 scoped_meta,
@@ -2846,7 +3098,7 @@ class WebUIHandler(BaseHTTPRequestHandler):
             from src.orchestrator import generate_report
 
             generated = generate_report(
-                input_json=str(DATA_FILE),
+                input_json=input_json,
                 template_id=template_id,
                 output_docx=str(output_path),
                 region=region,
@@ -2856,32 +3108,38 @@ class WebUIHandler(BaseHTTPRequestHandler):
                 meta_override=scoped_meta,
             )
             generated_path = Path(generated)
-            archived_report = HISTORY_ARCHIVE_STORE.archive_report(
-                task_id,
-                generated_path,
-                metadata={
-                    "template_id": template_id,
-                    "region": region or "",
-                    "time_range": time_range or "",
-                    "scope": report_scope,
-                    "section_names": sorted(str(key) for key in section_overrides),
-                },
-            )
-            archived_path = (ROOT / archived_report["archive_path"]).resolve()
-            try:
-                if generated_path.resolve() != archived_path and generated_path.resolve().is_relative_to(OUTPUT_DIR.resolve()):
-                    generated_path.unlink(missing_ok=True)
-            except OSError:
-                pass
-            generated_relative_path = relative_to_root(archived_path)
-            update_current_history_archive()
-            self.send_json({
+            if monitor_context:
+                generated_relative_path = relative_to_root(generated_path)
+            else:
+                archived_report = HISTORY_ARCHIVE_STORE.archive_report(
+                    task_id,
+                    generated_path,
+                    metadata={
+                        "template_id": template_id,
+                        "region": region or "",
+                        "time_range": time_range or "",
+                        "scope": report_scope,
+                        "section_names": sorted(str(key) for key in section_overrides),
+                    },
+                )
+                archived_path = (ROOT / archived_report["archive_path"]).resolve()
+                try:
+                    if generated_path.resolve() != archived_path and generated_path.resolve().is_relative_to(OUTPUT_DIR.resolve()):
+                        generated_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+                generated_relative_path = relative_to_root(archived_path)
+                update_current_history_archive()
+            response = {
                 "ok": True,
                 "message": f"报告生成完成，使用 {report_scope['matched_total']}/{report_scope['original_total']} 条数据",
                 "output_path": generated_relative_path,
                 "download_url": f"/download?path={quote(generated_relative_path, safe='/')}",
-                "history_catalog": build_history_catalog(),
-            })
+                **({} if monitor_context else {
+                    "history_catalog": build_history_catalog(),
+                }),
+            }
+            self.send_json(response)
         except AiReportExportScopeError as exc:
             self.send_json({"ok": False, "message": str(exc)}, status=409)
         except Exception as exc:

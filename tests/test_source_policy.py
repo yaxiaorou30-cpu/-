@@ -76,6 +76,7 @@ class SourceAccessPolicyTests(unittest.TestCase):
         self.assertTrue(public.allowed)
         self.assertFalse(private.allowed)
         self.assertEqual(private.code, "robots_disallowed")
+        self.assertIn("已跳过当前来源", private.reason)
         self.assertEqual(len(calls), 1)
         self.assertIn(SOURCE_POLICY_PRODUCT_TOKEN, calls[0][1]["headers"]["User-Agent"])
 
@@ -96,14 +97,13 @@ class SourceAccessPolicyTests(unittest.TestCase):
         network_error = SourceAccessPolicy(self.registry_path, fetcher=fail_fetch)
 
         self.assertTrue(unavailable.check("https://example.com/public").allowed)
-        self.assertEqual(
-            unreachable.check("https://example.com/public").code,
-            "robots_unreachable",
-        )
-        self.assertEqual(
-            network_error.check("https://example.com/public").code,
-            "robots_unreachable",
-        )
+        server_error = unreachable.check("https://example.com/public")
+        connection_error = network_error.check("https://example.com/public")
+
+        self.assertEqual(server_error.code, "robots_unreachable")
+        self.assertIn("已跳过当前来源", server_error.reason)
+        self.assertEqual(connection_error.code, "robots_unreachable")
+        self.assertIn("已跳过当前来源", connection_error.reason)
 
     def test_robots_redirects_are_never_followed_automatically(self):
         self.write_registry()
@@ -205,7 +205,7 @@ class SourceAccessPolicyTests(unittest.TestCase):
         self.assertEqual(external.code, "external_adapter_allowed")
         self.assertEqual(len(calls), 1)
 
-    def test_authorized_session_robots_default_follows_source_robots_requirement(self):
+    def test_authorized_session_robots_default_does_not_follow_public_crawler_requirement(self):
         source = {
             "id": "SRC-SAVED-SESSION",
             "name": "已保存网站会话",
@@ -230,9 +230,36 @@ class SourceAccessPolicyTests(unittest.TestCase):
             access_mode=AUTHORIZED_SESSION_ACCESS_MODE,
         )
 
-        self.assertFalse(decision.allowed)
-        self.assertEqual(decision.code, "robots_disallowed")
-        self.assertEqual(len(calls), 1)
+        self.assertTrue(decision.allowed)
+        self.assertEqual(decision.code, "authorized_session_allowed")
+        self.assertEqual(calls, [])
+
+    def test_positive_path_lists_do_not_block_other_public_pages(self):
+        source = {
+            "id": "SRC-LEGACY-PATH-LIST",
+            "name": "保留旧配置字段的公开来源",
+            "domains": ["example.com"],
+            "access_type": "A0",
+            "support_level": "S2",
+            "automation_enabled": True,
+            "robots_required": True,
+            "platform_rule_status": "test",
+            "allowed_path_prefixes": ["/search"],
+            "denied_path_prefixes": ["/account/"],
+        }
+        self.write_registry(sources=[source])
+        policy = SourceAccessPolicy(
+            self.registry_path,
+            fetcher=lambda *args, **kwargs: FakeResponse(404, b"", args[0]),
+        )
+
+        public = policy.check("https://example.com/article/123")
+        private = policy.check("https://example.com/account/profile")
+
+        self.assertTrue(public.allowed)
+        self.assertEqual(public.code, "robots_allowed")
+        self.assertFalse(private.allowed)
+        self.assertEqual(private.code, "local_path_denied")
 
     def test_authorized_session_explicit_robots_requirement_is_respected(self):
         source = {
@@ -373,12 +400,13 @@ class SourceAccessPolicyTests(unittest.TestCase):
             "https://www.bing.com/news/search?q=test&format=RSS",
             "Bing News RSS",
         )
-        unrelated = policy.check("https://www.bing.com/account/private", "Bing News RSS")
+        private = policy.check("https://www.bing.com/account/private", "Bing News RSS")
 
         self.assertTrue(allowed.allowed)
         self.assertEqual(allowed.source_rule_id, "SRC-PUBLIC-BING-NEWS")
         self.assertEqual(allowed.support_level, "S2")
-        self.assertEqual(unrelated.code, "path_not_registered")
+        self.assertFalse(private.allowed)
+        self.assertEqual(private.code, "local_path_denied")
 
     def test_production_registry_allows_baidu_qianfan_search_api(self):
         policy = SourceAccessPolicy(
@@ -400,8 +428,15 @@ class SourceAccessPolicyTests(unittest.TestCase):
         robots_calls = []
 
         def fetcher(*args, **kwargs):
-            robots_calls.append(args[0])
-            return FakeResponse(404, b"", args[0])
+            robots_url = args[0]
+            robots_calls.append(robots_url)
+            if robots_url == "https://www.baidu.com/robots.txt":
+                return FakeResponse(
+                    200,
+                    b"User-agent: *\nDisallow: /s\n",
+                    robots_url,
+                )
+            return FakeResponse(404, b"", robots_url)
 
         policy = SourceAccessPolicy(
             Path("config") / "source_access_rules.json",
@@ -413,13 +448,38 @@ class SourceAccessPolicyTests(unittest.TestCase):
             "https://baijiahao.baidu.com/s?id=1234567890",
             "百家号文章",
         )
+        encyclopedia = policy.check(
+            "https://baike.baidu.com/item/test",
+            "百度百科",
+        )
 
         self.assertFalse(search.allowed)
         self.assertEqual(search.source_rule_id, "SRC-STABLE-BAIDU")
-        self.assertEqual(search.code, "automation_disabled")
+        self.assertEqual(search.code, "robots_disallowed")
         self.assertEqual(article.source_rule_id, "SRC-PUBLIC-BAIJIAHAO")
         self.assertTrue(article.allowed)
-        self.assertEqual(robots_calls, [])
+        self.assertTrue(encyclopedia.allowed)
+        self.assertEqual(encyclopedia.source_rule_id, "SRC-STABLE-BAIDU")
+        self.assertEqual(
+            robots_calls,
+            [
+                "https://www.baidu.com/robots.txt",
+                "https://baijiahao.baidu.com/robots.txt",
+                "https://baike.baidu.com/robots.txt",
+            ],
+        )
+
+    def test_production_registry_enables_unverified_social_public_access(self):
+        policy = SourceAccessPolicy(
+            Path("config") / "source_access_rules.json",
+            fetcher=lambda *args, **kwargs: FakeResponse(404, b"", args[0]),
+        )
+
+        public = policy.check("https://www.douyin.com/search/test", "抖音")
+
+        self.assertTrue(public.allowed)
+        self.assertEqual(public.source_rule_id, "SRC-SOCIAL-DOUYIN")
+        self.assertEqual(public.code, "robots_allowed")
 
 
 if __name__ == "__main__":
